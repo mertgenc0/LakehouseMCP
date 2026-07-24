@@ -1,0 +1,28 @@
+[project]
+name = "mcp-lakehouse-copilot"
+version = "0.1.0"
+description = "MCP-Based Autonomous Data Lakehouse Copilot"
+requires-python = ">=3.11"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "ASYNC", "S", "SIM"]
+ignore = ["S101"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = ["integration: gerçek LLM/DB çağrısı yapan testler"]

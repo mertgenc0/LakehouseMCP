@@ -1,0 +1,47 @@
+
+# MCP-Based Autonomous Data Lakehouse Copilot
+# Python 3.11+  |  pip install -r requirements.txt
+
+
+# MCP (Model Context Protocol)
+mcp>=1.2.0
+
+# LLM & Agent Orchestration
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0         # GPT-4o entegrasyonu
+langgraph>=0.2.40               # StateGraph + self-correction loop
+langgraph-checkpoint>=2.0.0     # MemorySaver / thread bazlı state
+openai>=1.50.0
+
+#  Data Engine
+duckdb>=1.1.0                   # zero-copy Parquet/CSV sorgulama
+polars>=1.12.0                  # kolon-bazlı in-memory dönüşümler
+pyarrow>=17.0.0                 # Arrow interop (DuckDB <-> Polars)
+pandas>=2.2.0                   # yalnızca uyumluluk/serileştirme katmanı
+
+#  PostgreSQL
+psycopg[binary]>=3.2.0
+sqlalchemy>=2.0.30
+
+#  Config & Validation
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
+python-dotenv>=1.0.1
+
+#  CLI & Logging
+rich>=13.9.0                    # tablo/markdown terminal çıktısı
+typer>=0.12.0                   # CLI argümanları
+structlog>=24.4.0
+
+# Async yardımcıları
+anyio>=4.6.0
+tenacity>=9.0.0                 # transient hatalarda backoff
+
+
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+pytest-cov>=5.0.0
+ruff>=0.7.0
+black>=24.10.0
+mypy>=1.13.0
