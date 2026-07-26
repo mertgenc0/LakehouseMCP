@@ -25,10 +25,11 @@ _STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
 _WORD = re.compile(r"\b[a-z_]+\b")
 _LIMIT_TAIL = re.compile(r"\blimit\s+\d+(\s+offset\s+\d+)?\s*$")
 
-_ALLOWED_STARTS: frozenset[str] = frozenset({"select", "with"})
 
+_ALLOWED_STARTS: frozenset[str] = frozenset({"select", "with"})
+#frozenset immutable → biri yanlışlıkla .add("select") yaparsa Python hata verir. Küçük ama savunmacı bir seçim.
 _BANNED_KEYWORDS: frozenset[str] = frozenset({
-      # CLAUDE.md §5 explicit list
+      #explicit list
       "drop", "delete", "update", "insert", "alter", "create",
       "attach", "copy", "install", "load",
       # Aynı sınıftan diğer state-changing komutlar
@@ -50,14 +51,14 @@ def validate_sql(sql: str) -> str:
         raise GuardrailViolation("Boş SQL", query=sql)
 
     # 1. Yorumları at, trailing ';' temizle (çalıştırılacak metin)
-    clean = _COMMENT_BLOCK.sub("", sql)
-    clean = _COMMENT_LINE.sub("", clean)
+    clean = _COMMENT_BLOCK.sub(" ", sql)
+    clean = _COMMENT_LINE.sub(" ", clean)
     clean = clean.strip().rstrip(";").strip()
     if not clean:
         raise GuardrailViolation("Boş Sql", query=sql)
 
     # 2. Tarama kopyası: string literal'leri boşalt, lowercase — false-positive'i azaltır
-    scan = _STRING_LITERAL.sub("''", sql)
+    scan = _STRING_LITERAL.sub("''", sql).lower()
 
     # 3. Çoklu statement engelle ("SELECT 1; DROP TABLE users")
     if ";" in scan:
@@ -65,7 +66,7 @@ def validate_sql(sql: str) -> str:
 
     # 4. İlk anahtar sözcük SELECT veya WITH olmalı
     first = scan.split(maxsplit=1)[0]
-    if first in _ALLOWED_STARTS:
+    if first not in _ALLOWED_STARTS:
         raise GuardrailViolation(f"Yalnızca SELECT/WITH ile başlayan sorgular geçerlidir. Tespit Edilen: {first.upper()}", query=sql)
 
     # 5. Yasaklı anahtar sözcük taraması (word boundary — 'updated_at' ≠ 'update')
