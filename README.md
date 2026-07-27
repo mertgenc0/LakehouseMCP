@@ -195,4 +195,4 @@ Sessiz konsol için: `python main.py 2>/dev/null` (log dosyaya yine yazılır).
 
 ## Lisans / Katkı
 
-Learning/portfolio projesi. CLAUDE.md tek doğruluk kaynağı; kod yazmadan önce oku.
+Learning/portfolio projesi.
