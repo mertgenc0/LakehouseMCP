@@ -2,33 +2,37 @@
 
 """DuckDB MCP server — Parquet/CSV sorgulama.
 
-  FastMCP + DuckDB. LLM/LangChain importu YOK (CLAUDE.md §2).
-  Tool'lar hata durumunda exception fırlatmaz; QueryResult.fail(...) döner (§5).
+FastMCP + DuckDB. LLM/LangChain importu YOK (CLAUDE.md §2).
+Tool'lar hata durumunda exception fırlatmaz; QueryResult.fail(...) döner (§5).
 
-  Ayrı süreç olarak çalışır:
-      python -m src.mcp_servers.duckdb_server
-      npx @modelcontextprotocol/inspector python -m src.mcp_servers.duckdb_server
+Ayrı süreç olarak çalışır:
+    python -m src.mcp_servers.duckdb_server
+    npx @modelcontextprotocol/inspector python -m src.mcp_servers.duckdb_server
 """
+
 from __future__ import annotations
+
 import time
 from functools import lru_cache
 from pathlib import Path
 
 import duckdb
 from mcp.server.fastmcp import FastMCP
+
 from src.config import get_settings
 from src.core.exceptions import GuardrailViolation
 from src.core.guardrails import validate_path, validate_sql
 from src.core.logging import get_logger
 from src.mcp_servers.schemas import ColumnInfo, QueryResult
 
-log = get_logger(__name__, component = 'duckdb_server')
-mcp = FastMCP('duckdb-lakehouse')
+log = get_logger(__name__, component="duckdb_server")
+mcp = FastMCP("duckdb-lakehouse")
 
 _SUPPORTED_EXT: dict[str, str] = {
     ".parquet": "parquet_scan",
     ".csv": "read_csv_auto",
 }
+
 
 @lru_cache(maxsize=1)
 def _connect() -> duckdb.DuckDBPyConnection:
@@ -46,6 +50,7 @@ def _connect() -> duckdb.DuckDBPyConnection:
     log.info("duckdb_ready", data_dir=str(settings.data_dir), views=registered)
     return conn
 
+
 def _register_views(conn: duckdb.DuckDBPyConnection, data_dir: Path) -> list[str]:
     """
     DATA_DIR altındaki .parquet/.csv dosyalarını view olarak kaydeder.
@@ -61,8 +66,9 @@ def _register_views(conn: duckdb.DuckDBPyConnection, data_dir: Path) -> list[str
         if reader is None:
             continue
         view_name = path.stem
+        # _quote_ident + DATA_DIR altı path'ler; kullanıcı input'u değil
         conn.execute(
-            f"CREATE OR REPLACE VIEW {_quote_ident(view_name)} AS "
+            f"CREATE OR REPLACE VIEW {_quote_ident(view_name)} AS "  # noqa: S608
             f"SELECT * FROM {reader}('{path.as_posix()}')"
         )
         registered.append(view_name)
@@ -75,8 +81,10 @@ def _quote_ident(identifier: str) -> str:
         raise GuardrailViolation(f"Geçersiz identifier: {identifier}")
     return f'"{identifier}"'
 
+
 def _ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
+
 
 @mcp.tool()
 def list_tables() -> QueryResult:
@@ -95,9 +103,8 @@ def list_tables() -> QueryResult:
     except Exception as exc:
         elapsed = _ms(start)
         log.exception("list_tables_failed", elapsed_ms=elapsed)
-        return QueryResult.fail(
-            error_type=type(exc).__name__, message=str(exc), elapsed_ms=elapsed
-        )
+        return QueryResult.fail(error_type=type(exc).__name__, message=str(exc), elapsed_ms=elapsed)
+
 
 @mcp.tool()
 def describe_table(table: str) -> QueryResult:
@@ -120,9 +127,7 @@ def describe_table(table: str) -> QueryResult:
         ]
         elapsed = _ms(start)
         log.info("describe_table_ok", table=table, columns=len(data), elapsed_ms=elapsed)
-        return QueryResult.ok(
-            data=data, columns=["name", "dtype", "nullable"], elapsed_ms=elapsed
-        )
+        return QueryResult.ok(data=data, columns=["name", "dtype", "nullable"], elapsed_ms=elapsed)
     except GuardrailViolation as exc:
         return QueryResult.fail(
             error_type="GuardrailViolation", message=exc.reason, elapsed_ms=_ms(start)
@@ -130,9 +135,8 @@ def describe_table(table: str) -> QueryResult:
     except Exception as exc:
         elapsed = _ms(start)
         log.exception("describe_table_failed", table=table, elapsed_ms=elapsed)
-        return QueryResult.fail(
-            error_type=type(exc).__name__, message=str(exc), elapsed_ms=elapsed
-        )
+        return QueryResult.fail(error_type=type(exc).__name__, message=str(exc), elapsed_ms=elapsed)
+
 
 @mcp.tool()
 def query_sql(sql: str) -> QueryResult:
@@ -148,7 +152,7 @@ def query_sql(sql: str) -> QueryResult:
         cursor = conn.execute(safe_sql)
         columns = [d[0] for d in cursor.description or []]
         rows = cursor.fetchall()
-        data = [dict(zip(columns, row)) for row in rows]
+        data = [dict(zip(columns, row, strict=True)) for row in rows]
         elapsed = _ms(start)
         log.info("query_ok", rows=len(data), elapsed_ms=elapsed, sql_preview=sql[:120])
         return QueryResult.ok(data=data, columns=columns, elapsed_ms=elapsed)
@@ -161,10 +165,9 @@ def query_sql(sql: str) -> QueryResult:
     except Exception as exc:
         elapsed = _ms(start)
         log.exception("query_failed", elapsed_ms=elapsed, sql_preview=sql[:120])
-        return QueryResult.fail(
-            error_type=type(exc).__name__, message=str(exc), elapsed_ms=elapsed
-        )
-    
+        return QueryResult.fail(error_type=type(exc).__name__, message=str(exc), elapsed_ms=elapsed)
+
+
 @mcp.tool()
 def preview_file(path: str, limit: int = 10) -> QueryResult:
     """DATA_DIR altındaki bir dosyanın ilk N satırını gösterir.
@@ -181,12 +184,13 @@ def preview_file(path: str, limit: int = 10) -> QueryResult:
             raise GuardrailViolation(f"Desteklenmeyen dosya türü: {safe_path.suffix}")
         limit = max(1, min(int(limit), 100))
         conn = _connect()
+        # validate_path DATA_DIR'i doğruladı, limit int'e cast edildi
         cursor = conn.execute(
-            f"SELECT * FROM {reader}('{safe_path.as_posix()}') LIMIT {limit}"
+            f"SELECT * FROM {reader}('{safe_path.as_posix()}') LIMIT {limit}"  # noqa: S608
         )
         columns = [d[0] for d in cursor.description or []]
         rows = cursor.fetchall()
-        data = [dict(zip(columns, row)) for row in rows]
+        data = [dict(zip(columns, row, strict=True)) for row in rows]
         elapsed = _ms(start)
         log.info("preview_ok", path=str(safe_path), rows=len(data), elapsed_ms=elapsed)
         return QueryResult.ok(data=data, columns=columns, elapsed_ms=elapsed)
@@ -199,9 +203,8 @@ def preview_file(path: str, limit: int = 10) -> QueryResult:
     except Exception as exc:
         elapsed = _ms(start)
         log.exception("preview_failed", path=path, elapsed_ms=elapsed)
-        return QueryResult.fail(
-            error_type=type(exc).__name__, message=str(exc), elapsed_ms=elapsed
-        )
+        return QueryResult.fail(error_type=type(exc).__name__, message=str(exc), elapsed_ms=elapsed)
+
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")

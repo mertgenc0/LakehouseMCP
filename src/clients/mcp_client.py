@@ -7,14 +7,14 @@ Mimarideki yeri:
   - Agent doğrudan subprocess.Popen(...) veya duckdb.connect(...) çağırmaz — sadece bu client üzerinden konuşur
   - İleride Postgres server eklendiğinde aynı class'ı postgres_client() factory ile yeniden kullanacağız.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
-
 from contextlib import AsyncExitStack
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -24,7 +24,8 @@ from src.config import get_settings
 from src.core.exceptions import MCPConnectionError
 from src.core.logging import get_logger
 
-logger = get_logger(__name__, component= "mcp_client")
+logger = get_logger(__name__, component="mcp_client")
+
 
 class MCPClient:
     """
@@ -32,7 +33,7 @@ class MCPClient:
     Async context manager olarak kullanılır; süreç ve bağlantı otomatik yönetilir.
     """
 
-    def __init__(self, name: str, command: str, args: list[str], timeout: int=60) -> None:
+    def __init__(self, name: str, command: str, args: list[str], timeout: int = 60) -> None:
         self.name = name
         self.command = command
         self.args = args
@@ -40,7 +41,7 @@ class MCPClient:
         self._session: ClientSession | None = None
         self._stack: AsyncExitStack | None = None
 
-    async def __aenter__(self) -> "MCPClient":
+    async def __aenter__(self) -> MCPClient:
         stack = AsyncExitStack()
         try:
             params = StdioServerParameters(command=self.command, args=self.args, env=None)
@@ -53,11 +54,14 @@ class MCPClient:
             return self
         except Exception as exc:
             await stack.aclose()
-            raise MCPConnectionError(
-                f"MCP Sunucusuna Bağlnamadı ({self.name}): {exc}"
-            ) from exc
+            raise MCPConnectionError(f"MCP Sunucusuna Bağlnamadı ({self.name}): {exc}") from exc
 
-    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         if self._stack is not None:
             await self._stack.aclose()
         self._session = None
@@ -66,7 +70,7 @@ class MCPClient:
 
     async def list_tools(self) -> list[Tool]:
         if self._session is None:
-            raise MCPConnectionError("Session açık değil - 'async with' içiinde kullan")
+            raise MCPConnectionError("Session açık değil — 'async with' içinde kullan")
         result = await self._session.list_tools()
         return list(result.tools)
 
@@ -82,11 +86,11 @@ class MCPClient:
                 MCPConnectionError: Session yok, timeout, iletişim veya parse hatası.
         """
         if self._session is None:
-            raise MCPConnectionError("SEssion açık değil - 'async with' içinde kullan")
+            raise MCPConnectionError("Session açık değil — 'async with' içinde kullan")
         try:
             call = self._session.call_tool(name, arguments)
             result = await asyncio.wait_for(call, timeout=self.timeout)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             logger.error("mcp_call_timeout", tool=name, timeout=self.timeout)
             raise MCPConnectionError(f"Tool timeout ({name}, {self.timeout}s)") from exc
         except Exception as exc:
@@ -104,19 +108,29 @@ class MCPClient:
                 f"Tool ({name}) beklenmeyen içerik tipi: {type(first).__name__}"
             )
         try:
-            return json.loads(text)
+            # cast: json.loads Any döner; QueryResult sözleşmesi dict olduğunu garanti eder.
+            return cast(dict[str, Any], json.loads(text))
         except json.JSONDecodeError as exc:
             raise MCPConnectionError(f"Tool ({name}) yanıtı JSON parse edilemedi") from exc
 
+
 def duckdb_client() -> MCPClient:
     """Settings'ten DuckDB MCP client'ı üretir."""
-    s=get_settings()
+    s = get_settings()
     return MCPClient(
         name="duckdb",
         command=s.mcp_duckdb_server_cmd,
         args=s.mcp_duckdb_server_args,
-        timeout=s.mcp_tool_timeout
+        timeout=s.mcp_tool_timeout,
     )
 
 
-
+def postgres_client() -> MCPClient:
+    """Settings'ten PostgreSQL MCP client'ı üretir."""
+    s = get_settings()
+    return MCPClient(
+        name="postgres",
+        command=s.mcp_postgres_server_cmd,
+        args=s.mcp_postgres_server_args,
+        timeout=s.mcp_tool_timeout,
+    )

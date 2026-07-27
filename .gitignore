@@ -7,6 +7,7 @@ logs/*.log
 data/raw/*
 data/processed/*
 !data/**/.gitkeep
+CLAUDE.md
 *.duckdb
 *.duckdb.wal
 .pytest_cache/
@@ -17,4 +18,4 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
-CLAUDE.md
+note.txt

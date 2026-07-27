@@ -14,13 +14,17 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "ASYNC", "S", "SIM"]
-ignore = ["S101"]
+# E501 (line too long): `ruff format` kodu zaten sınırlıyor; yorumlar için gevşek.
+# S101 (assert kullanımı): pytest testlerinde standart.
+ignore = ["S101", "E501"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 strict = true
 ignore_missing_imports = true
 files = ["src"]
+explicit_package_bases = true
+namespace_packages = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

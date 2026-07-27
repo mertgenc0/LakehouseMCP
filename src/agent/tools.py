@@ -22,7 +22,8 @@ from pydantic import BaseModel, Field
 from src.clients.mcp_client import duckdb_client
 from src.core.logging import get_logger
 
-log = get_logger(__name__, component = "agent_tools")
+log = get_logger(__name__, component="agent_tools")
+
 
 # Input schemas — LLM function-calling parametrelerini bunlardan üretir
 class QuerySqlInput(BaseModel):
@@ -31,25 +32,30 @@ class QuerySqlInput(BaseModel):
         description=(
             "SELECT veya WITH ile başlayan tek statement SQL. "
             "Guardrail otomatik LIMIT ekler, DDL/DML reddedilir."
-        )
+        ),
     )
+
 
 class DescribeTableInput(BaseModel):
     table: str = Field(..., description="list_tables çıktısındaki tablo adı.")
+
 
 # Async runner'lar — her tool çağrısı için MCP session
 async def _call(tool: str, arguments: dict[str, Any]) -> str:
     """MCP tool çağrısı yapar, sonucu LLM için JSON string olarak döner."""
     async with duckdb_client() as client:
         result = await client.call_tool(tool, arguments)
-    log.info("tool_called", tool= tool, status=result.get("status"))
+    log.info("tool_called", tool=tool, status=result.get("status"))
     return json.dumps(result, ensure_ascii=False, default=str)
+
 
 async def _list_tables() -> str:
     return await _call("list_tables", {})
 
+
 async def _describe_table(table: str) -> str:
     return await _call("describe_table", {"table": table})
+
 
 async def _query_sql(sql: str) -> str:
     return await _call("query_sql", {"sql": sql})
@@ -62,7 +68,7 @@ list_tables_tool = StructuredTool.from_function(
     description=(
         "DuckDB veri katmanındaki mevcut tabloları listeler. "
         "Her sorgudan ÖNCE hangi tabloların var olduğunu görmek için çağır."
-    )
+    ),
 )
 
 describe_table_tool = StructuredTool.from_function(

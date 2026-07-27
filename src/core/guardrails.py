@@ -1,4 +1,4 @@
-#--MCP tool'u sorguyu DuckDB/Postgres'e göndermeden önce SQL'i (ve dosya yollarını) inceler; kural dışıysa GuardrailViolation fırlatır.--#
+# --MCP tool'u sorguyu DuckDB/Postgres'e göndermeden önce SQL'i (ve dosya yollarını) inceler; kural dışıysa GuardrailViolation fırlatır.--#
 """
 Neden LLM prompt'u yetmez?
   - LLM olasılıksaldır; hallucinate edip DELETE FROM sales üretebilir.
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+
 from src.config import get_settings
 from src.core.exceptions import GuardrailViolation
 
@@ -27,14 +28,29 @@ _LIMIT_TAIL = re.compile(r"\blimit\s+\d+(\s+offset\s+\d+)?\s*$")
 
 
 _ALLOWED_STARTS: frozenset[str] = frozenset({"select", "with"})
-#frozenset immutable → biri yanlışlıkla .add("select") yaparsa Python hata verir. Küçük ama savunmacı bir seçim.
-_BANNED_KEYWORDS: frozenset[str] = frozenset({
-      #explicit list
-      "drop", "delete", "update", "insert", "alter", "create",
-      "attach", "copy", "install", "load",
-      # Aynı sınıftan diğer state-changing komutlar
-      "truncate", "grant", "revoke", "vacuum", "set",
-})
+# frozenset immutable → biri yanlışlıkla .add("select") yaparsa Python hata verir. Küçük ama savunmacı bir seçim.
+_BANNED_KEYWORDS: frozenset[str] = frozenset(
+    {
+        # explicit list
+        "drop",
+        "delete",
+        "update",
+        "insert",
+        "alter",
+        "create",
+        "attach",
+        "copy",
+        "install",
+        "load",
+        # Aynı sınıftan diğer state-changing komutlar
+        "truncate",
+        "grant",
+        "revoke",
+        "vacuum",
+        "set",
+    }
+)
+
 
 def validate_sql(sql: str) -> str:
     """
@@ -58,7 +74,7 @@ def validate_sql(sql: str) -> str:
         raise GuardrailViolation("Boş Sql", query=sql)
 
     # 2. Tarama kopyası: string literal'leri boşalt, lowercase — false-positive'i azaltır
-    scan = _STRING_LITERAL.sub("''", sql).lower()
+    scan = _STRING_LITERAL.sub("''", clean).lower()
 
     # 3. Çoklu statement engelle ("SELECT 1; DROP TABLE users")
     if ";" in scan:
@@ -67,19 +83,22 @@ def validate_sql(sql: str) -> str:
     # 4. İlk anahtar sözcük SELECT veya WITH olmalı
     first = scan.split(maxsplit=1)[0]
     if first not in _ALLOWED_STARTS:
-        raise GuardrailViolation(f"Yalnızca SELECT/WITH ile başlayan sorgular geçerlidir. Tespit Edilen: {first.upper()}", query=sql)
+        raise GuardrailViolation(
+            f"Yalnızca SELECT/WITH ile başlayan sorgular geçerlidir. Tespit Edilen: {first.upper()}",
+            query=sql,
+        )
 
     # 5. Yasaklı anahtar sözcük taraması (word boundary — 'updated_at' ≠ 'update')
     banned = set(_WORD.findall(scan)) & _BANNED_KEYWORDS
     if banned:
         raise GuardrailViolation(
-            f"Yasaklı anahtar sözcük: {', '.join(sorted(banned)).upper()}",
-            query=sql
+            f"Yasaklı anahtar sözcük: {', '.join(sorted(banned)).upper()}", query=sql
         )
     # 6. LIMIT yoksa ekle (patlamış sonuç setini önle)
     if not _LIMIT_TAIL.findall(scan):
         clean = f"{clean} LIMIT {get_settings().max_rows_returned}"
     return clean
+
 
 def validate_path(candidate: str | Path) -> Path:
     """
@@ -97,11 +116,6 @@ def validate_path(candidate: str | Path) -> Path:
     try:
         resolved.relative_to(data_dir)
     except ValueError as exc:
-        raise GuardrailViolation(
-            f"Dosya yolu DATA_DIR ({data_dir}) dışında: {resolved}"
-        ) from exc
+        raise GuardrailViolation(f"Dosya yolu DATA_DIR ({data_dir}) dışında: {resolved}") from exc
 
     return resolved
-
-
-

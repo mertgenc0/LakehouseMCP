@@ -9,14 +9,19 @@ Neden bu kadar merkezi?
 """
 
 from __future__ import annotations
+
 from typing import Any, Literal
+
 from pydantic import BaseModel, ConfigDict, Field
+
 
 class ColumnInfo(BaseModel):
     """describe_table tool'unun 'data' listesindeki tek eleman."""
+
     name: str
     dtype: str
     nullable: bool = True
+
 
 class QueryResult(BaseModel):
     """
@@ -34,12 +39,14 @@ class QueryResult(BaseModel):
     data: list[dict[str, Any]] = Field(default_factory=list)
     elapsed_ms: int = 0
     error_type: str | None = None
-    message: str | None= None
+    message: str | None = None
 
     @classmethod
     def ok(cls, *, data: list[dict[str, Any]], columns: list[str], elapsed_ms: int) -> QueryResult:
-        return cls(status="success", row_count=len(data), columns=columns, data= data, elapsed_ms=elapsed_ms)
+        return cls(
+            status="success", row_count=len(data), columns=columns, data=data, elapsed_ms=elapsed_ms
+        )
 
     @classmethod
-    def fail(cls, *, error_type:str, message:str, elapsed_ms: int = 0) -> QueryResult:
+    def fail(cls, *, error_type: str, message: str, elapsed_ms: int = 0) -> QueryResult:
         return cls(status="error", error_type=error_type, message=message, elapsed_ms=elapsed_ms)

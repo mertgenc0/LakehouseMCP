@@ -25,9 +25,10 @@ Self-correction loop `error_analysis → mcp_tool_execution` üzerinde döner.
 `attempt >= MAX_RETRIES` olunca give_up node'u final_answer'ı doldurur, END'e gider.
 CLAUDE.md §5: "graph sessizce None dönmez, açıklayıcı bir başarısızlık mesajıyla sonlanır."
 """
+
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from langgraph.graph import END, START, StateGraph
 
@@ -112,4 +113,5 @@ async def run(question: str) -> AgentState:
         has_answer="final_answer" in final_state,
         attempts=final_state.get("attempt", 0),
     )
-    return final_state
+    # cast: ainvoke Any döner; state şeması AgentState TypedDict ile garanti edildi.
+    return cast(AgentState, final_state)

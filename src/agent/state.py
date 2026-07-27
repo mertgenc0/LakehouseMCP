@@ -9,8 +9,10 @@ node'lar saf — State alır, güncellenmiş kısmi State döner.
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Literal, TypedDict
+
 from src.mcp_servers.schemas import QueryResult
+
 
 class AgentState(TypedDict, total=False):
     """
@@ -20,9 +22,10 @@ class AgentState(TypedDict, total=False):
     LangGraph state'i otomatik merge eder.
     """
 
-    question: str # Kullanıcının doğal dilde sorusu
+    question: str  # Kullanıcının doğal dilde sorusu
     schema_context: str  # Formatlanmış tablo/kolon özeti, prompt'a gömülür
     sql: str  # Şu an denenen SQL
+    source: Literal["duckdb", "postgres"]  # LLM'in seçtiği veri kaynağı
     attempt: int  # Kaçıncı deneme (0'dan başlar)
     last_error: str  # DuckDB'nin döndürdüğü ham hata mesajı
     last_error_type: str  # `CatalogException`, `GuardrailViolation`, ...
@@ -32,8 +35,3 @@ class AgentState(TypedDict, total=False):
 
     # ---------- Nihai cevap (summarize node) ----------
     final_answer: str  # Kullanıcıya sunulacak Türkçe özet
-
-
-
-
-

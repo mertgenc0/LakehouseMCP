@@ -7,15 +7,19 @@ Neden print() yetmez?
   - Bound logger paterni: bir kere log = get_logger(__name__, tool="query_sql") dedin mi, o logger'dan çıkan her satırda tool="query_sql" otomatik yer alır. Manuel tekrar yok.
   - İki hedef: konsol (dev deneyimi) + dosya (kalıcı iz).
 """
+
 from __future__ import annotations
+
 import logging
 import sys
-from typing import Any
+from typing import Any, cast
+
 import structlog
 
 from src.config import get_settings
 
 _configured = False
+
 
 def configure_logging() -> None:
     global _configured
@@ -35,14 +39,16 @@ def configure_logging() -> None:
         structlog.processors.format_exc_info,
     ]
 
-    console_handler = logging.StreamHandler(sys.stderr) #  MCP sunucusu stdout üzerinden JSON-RPC konuşur. Eğer log'ları stdout'a atarsan MCP protokolünü kirletirsin, client parse edemez. Loglama daima stderr'e.
+    console_handler = logging.StreamHandler(
+        sys.stderr
+    )  #  MCP sunucusu stdout üzerinden JSON-RPC konuşur. Eğer log'ları stdout'a atarsan MCP protokolünü kirletirsin, client parse edemez. Loglama daima stderr'e.
     console_handler.setFormatter(
         structlog.stdlib.ProcessorFormatter(
             foreign_pre_chain=shared_processors,
             processors=[
                 structlog.stdlib.ProcessorFormatter.remove_processors_meta,
                 structlog.dev.ConsoleRenderer(colors=True),
-            ]
+            ],
         )
     )
 
@@ -53,7 +59,7 @@ def configure_logging() -> None:
             processors=[
                 structlog.stdlib.ProcessorFormatter.remove_processors_meta,
                 structlog.processors.JSONRenderer(),
-            ]
+            ],
         )
     )
 
@@ -64,17 +70,15 @@ def configure_logging() -> None:
     root.addHandler(file_hanler)
 
     structlog.configure(
-        processors=[
-            *shared_processors,
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter
-        ],
+        processors=[*shared_processors, structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
         wrapper_class=structlog.make_filtering_bound_logger(level),
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
-        cache_logger_on_first_use=True
+        cache_logger_on_first_use=True,
     )
 
     _configured = True
+
 
 def get_logger(name: str, **context: Any) -> structlog.stdlib.BoundLogger:
     """
@@ -86,5 +90,5 @@ def get_logger(name: str, **context: Any) -> structlog.stdlib.BoundLogger:
     """
     if not _configured:
         configure_logging()
-    return structlog.get_logger(name).bind(**context) #logger'a bilgi yapıştırma.
-
+    # cast: structlog stub'ları bind() için Any döner; runtime'da BoundLogger.
+    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name).bind(**context))

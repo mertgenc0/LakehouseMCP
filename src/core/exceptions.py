@@ -10,6 +10,7 @@ Self-correction loop'un yakıtı budur: LangGraph node'u SQL çalışırken hata
 
 from __future__ import annotations
 
+
 class CopilotError(Exception):
     """Projedeki tüm custom exception'ların ortak atası.
     Standart Python'da except Exception yazarsak KeyboardInterrupt, SystemExit, MemoryError bile yakalanır — bunlar yakalanmamalı.
@@ -17,15 +18,18 @@ class CopilotError(Exception):
     hatalar yukarı çıkar. Bu, "gizli bug" avlamayı kolaylaştırır.
     """
 
-class GuardrailViolation(CopilotError):
+
+class GuardrailViolation(CopilotError):  # noqa: N818 — "Violation" anlamı "Error"dan güçlü
     """SQL guardrail'ının reddettiği sorgu.
     Örnek durumlar: DDL/DML denemesi, DATA_DIR dışı dosya erişimi,
     LIMIT üstünde sonuç, timeout aşımı.
     """
+
     def __init__(self, reason: str, *, query: str | None = None) -> None:
         self.reason = reason
         self.query = query
         super().__init__(f"GuardrailViolation: {reason}")
+
 
 class SQLExecutionError(CopilotError):
     """
@@ -33,26 +37,27 @@ class SQLExecutionError(CopilotError):
     Self-correction loop bu mesajı LLM'e AYNEN verir.
     LLM, tam hata metni + tam SQL ile SQL'i düzeltmeyi dener.
     """
+
     def __init__(self, message: str, *, query: str, engine: str) -> None:
         self.query = query
         self.engine = engine
         super().__init__(f"[{engine}] {message}")
+
 
 class MCPConnectionError(CopilotError):
     """
     MCP stdio süreci başlatılamadı, bağlantı düştü veya handshake başarısız. Bu hata retry edilmez — altyapı problemidir, kullanıcıya bildirilir.
     """
 
-class MaxRetriesExceeded(CopilotError):
+
+class MaxRetriesExceeded(CopilotError):  # noqa: N818 — "Exceeded" durumu net ifade ediyor
     """
     LangGraph self-correction loop MAX_RETRIES sonrası düzeltemedi. 'graph, kullanıcıya açıklayıcı bir başarısızlık mesajıyla
     temiz şekilde sonlanır — sessizce None dönmez.'
     """
+
     def __init__(self, attempts: int, last_error: str) -> None:
         self.attempts = attempts
         self.last_error = last_error
-        #Mesajı Zenginleştirme
-        super().__init__(
-            f"Failed after {attempts} attempts. Last error: {last_error}"
-        )
-
+        # Mesajı Zenginleştirme
+        super().__init__(f"Failed after {attempts} attempts. Last error: {last_error}")
