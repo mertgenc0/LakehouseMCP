@@ -21,14 +21,15 @@ from src.config import get_settings
 from src.core.exceptions import GuardrailViolation
 
 _COMMENT_LINE = re.compile(r"--[^\n]*")
+#re.DOTALL: /* comment */ gibi çok satırlı blok yorumlarında . karakterinin yeni satır (\n) karakterini de kapsamasını sağlar.
 _COMMENT_BLOCK = re.compile(r"/\*.*?\*/", re.DOTALL)
 _STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
 _WORD = re.compile(r"\b[a-z_]+\b")
 _LIMIT_TAIL = re.compile(r"\blimit\s+\d+(\s+offset\s+\d+)?\s*$")
 
 
+# frozer: Standart set (küme) yapısının değiştirilemez (immutable) halidir.
 _ALLOWED_STARTS: frozenset[str] = frozenset({"select", "with"})
-# frozenset immutable → biri yanlışlıkla .add("select") yaparsa Python hata verir. Küçük ama savunmacı bir seçim.
 _BANNED_KEYWORDS: frozenset[str] = frozenset(
     {
         # explicit list

@@ -22,23 +22,27 @@ _configured = False
 
 
 def configure_logging() -> None:
-    global _configured
+    global _configured # İkinci bir kez configure_logging() çağrıldığında sistemin sıfırdan log handler'ları ekleyip log akışını bozmasını önler
 
     if _configured:
         return
 
     settings = get_settings()
+    #getattr -> settings.log_level string'ini (örneğin "INFO") logging modülü üzerindeki karşılık gelen sabite (logging.INFO tamsayısına) dinamik olarak dönüştürür.
     level = getattr(logging, settings.log_level)
+    #Dosya yoksa oluşturut
     settings.log_file.parent.mkdir(parents=True, exist_ok=True)
 
     shared_processors: list[Any] = [
-        structlog.contextvars.merge_contextvars,
+        structlog.contextvars.merge_contextvars, #Asenkron (asyncio) görevler (tasks) arasında log bağlamlarının (context) kaybolmadan taşınmasını sağlayan işlemci.
         structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
+        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"), # Zaman damgası
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
     ]
 
+    # logging.StreamHandler & logging.FileHandler: Python standart logging modülüne ait handler'lar. Biri log verisini terminale (sys.stderr), diğeri belirtilen log dosyasına yazar.
+    #sys.stderr: MCP protokolünü bozmamak için konsol loglarını standart çıktı (stdout) yerine buraya yönlendiriyoruz.
     console_handler = logging.StreamHandler(
         sys.stderr
     )  #  MCP sunucusu stdout üzerinden JSON-RPC konuşur. Eğer log'ları stdout'a atarsan MCP protokolünü kirletirsin, client parse edemez. Loglama daima stderr'e.
@@ -70,7 +74,7 @@ def configure_logging() -> None:
     root.addHandler(file_hanler)
 
     structlog.configure(
-        processors=[*shared_processors, structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
+        processors=[*shared_processors, structlog.stdlib.ProcessorFormatter.wrap_for_formatter], # * list açma operatörü.
         wrapper_class=structlog.make_filtering_bound_logger(level),
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
@@ -79,6 +83,12 @@ def configure_logging() -> None:
 
     _configured = True
 
+"""
+Fonksiyona istediğin kadar isimli parametre geçebilmeni sağlar (get_logger("main", env="prod", user="admin")).
+Parametreler context isimli bir dict içinde toplanır.
+
+structlog: logları key-value (anahtar-değer) çiftleri halinde nesnel yapılandıran gelişmiş log kütüphanesi.
+"""
 
 def get_logger(name: str, **context: Any) -> structlog.stdlib.BoundLogger:
     """
@@ -90,5 +100,5 @@ def get_logger(name: str, **context: Any) -> structlog.stdlib.BoundLogger:
     """
     if not _configured:
         configure_logging()
-    # cast: structlog stub'ları bind() için Any döner; runtime'da BoundLogger.
+    # Runtime'da (çalışma zamanında) hiçbir şey yapmaz. Yalnızca tip denetleyicisine (mypy) şunu söyler: "Geriye dönen nesnenin tipi BoundLogger sınıfıdır, tip uyumsuzluğu uyarısı verme."
     return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name).bind(**context))

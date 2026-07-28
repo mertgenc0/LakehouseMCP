@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     )
 
     # OpenAI
-    openai_api_key: SecretStr  # SecretStr -> Yanlışlıkla print(settings) yazarsan çıktı: openai_api_key=SecretStr('**********')
+    openai_api_key: SecretStr  # SecretStr -> Hassas değişkenler için sunulmuştur --- print(openai_api_key) ->  sk-***********
     openai_model: str = "gpt-4o"
     openai_temperature: float = 0.0
     openai_max_tokens: int = 4096
@@ -44,11 +44,15 @@ class Settings(BaseSettings):
     duckdb_memory_limt: str = "4GB"
 
     # MCP Servers
+    # Annotated -> tip metadatalarını bir araya getirir, tipe ek bilgi veya özel kurallar bağlamamızı sağlayan bir zarftır.
+    # NoDecode -> pydantic-settings'e karmaşık bir JSON decode işlemi yapmamasını, raw string kalmasını söyler.
     mcp_duckdb_server_cmd: str = "python"
     # Eğer default=["a","b"] yazsaydın tüm Settings örnekleri aynı liste referansını paylaşırdı — biri değiştirse hepsi değişirdi. default_factory her seferinde yeni liste üretir
+
     mcp_duckdb_server_args: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["-m", "src.mcp_servers.duckdb_server"]
+        default_factory=lambda: ["-m", "src.mcp_servers.duckdb_server"] #Python'daki Mutable Default Argument hatasını önler. Doğrudan default=["-m", ...] yazılsaydı tüm Settings örnekleri bellekte aynı liste referansını (pointer) paylaşırdı. default_factory her nesne üretildiğinde yeni bir liste instance'ı açar.
     )
+
     mcp_postgres_server_cmd: str = "python"
     mcp_postgres_server_args: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [
@@ -58,6 +62,7 @@ class Settings(BaseSettings):
     )
     mcp_tool_timeout: int = 60
 
+
     # Agent / Guardrials
     max_retries: int = 3
     max_rows_returned: int = 1000
@@ -66,16 +71,19 @@ class Settings(BaseSettings):
 
     # Observability
     """env'de LOG_LEVEL=YARIM yazarsan pydantic başlangıçta hata fırlatır: "sadece bu 4 değerden biri olabilir". Runtime'da değil, başlangıçta yakalanır"""
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO" #Literal -> Değişkenin Alabileceği değerleri verilenlere göre ksıtlar
     log_file: Path = Path("./logs/copilot.log")
 
+
+    # field_validator: Pydantic kütüphanesine ait bir dekoratördür. Sınıftaki bir değişkene veri atanırken araya girer, veriyi yakalar, kontrol eder veya değiştirir, ardından onay verirse değişkene atar.
     @field_validator("mcp_duckdb_server_args", "mcp_postgres_server_args", mode="before")
-    @classmethod
+    @classmethod #Sen nesneye (instance) değil, doğrudan Sınıfın kendisine (cls) aitsin.
     def _split_csv(cls, v: str | list[str]) -> list[str]:
         """`.env` içindeki 'a,b,c' string'ini list[str]'e çevirir."""
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
+
 
     @field_validator("data_dir", "log_file")
     @classmethod
@@ -84,17 +92,8 @@ class Settings(BaseSettings):
         return v.expanduser().resolve()  # ./data/processed göreceli yolunu mutlak yola (/Users/mertgenc/.../data/processed) çevirir.
 
 
-"""
-@lru_cache(maxsize=1) + get_settings()                                                                                                                                                                       
-                                                                                                                                                                                                                  
-Singleton pattern. get_settings() ilk çağrıda .env'i okur, Settings kurar, cache'ler. İkinci çağrıda cache'ten döner.
-Tüm proje bu fonksiyonu import edecek:                                                      
-from src.config import get_settings
-settings = get_settings()                                                                                                                                                                                         
-timeout = settings.query_timeout_seconds
-"""
 
-
+#lru_cache - Python'ın functools modülünden gelir. Fonksiyonun sonucunu hafızaya (belleğe/cache) kaydeder.
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Process başına tek Settings örneği döner (idempotent, thread-safe)."""

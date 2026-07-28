@@ -10,9 +10,10 @@ Self-correction loop'un yakıtı budur: LangGraph node'u SQL çalışırken hata
 
 from __future__ import annotations
 
-
+# Standart Python Exception sınıfından türetilmiş (inheritance) temel (base) exception sınıfıdır.
 class CopilotError(Exception):
-    """Projedeki tüm custom exception'ların ortak atası.
+    """
+    Projedeki tüm custom exception'ların ortak atası.
     Standart Python'da except Exception yazarsak KeyboardInterrupt, SystemExit, MemoryError bile yakalanır — bunlar yakalanmamalı.
     except CopilotError yazınca sadece bizim ürettiğimiz hatalar yakalanır; sistemsel
     hatalar yukarı çıkar. Bu, "gizli bug" avlamayı kolaylaştırır.
@@ -20,15 +21,15 @@ class CopilotError(Exception):
 
 
 class GuardrailViolation(CopilotError):  # noqa: N818 — "Violation" anlamı "Error"dan güçlü
-    """SQL guardrail'ının reddettiği sorgu.
+    """
+    SQL guardrail'ının reddettiği sorgu.
     Örnek durumlar: DDL/DML denemesi, DATA_DIR dışı dosya erişimi,
     LIMIT üstünde sonuç, timeout aşımı.
     """
-
     def __init__(self, reason: str, *, query: str | None = None) -> None:
         self.reason = reason
         self.query = query
-        super().__init__(f"GuardrailViolation: {reason}")
+        super().__init__(f"GuardrailViolation: {reason}") # Üst sınıfın (CopilotError / Exception) yapıcı metodunu (__init__) çağırır.
 
 
 class SQLExecutionError(CopilotError):
@@ -37,11 +38,11 @@ class SQLExecutionError(CopilotError):
     Self-correction loop bu mesajı LLM'e AYNEN verir.
     LLM, tam hata metni + tam SQL ile SQL'i düzeltmeyi dener.
     """
-
+    # * Sonrası için gelen dğerlere adını açıkca belirtmek gerek
     def __init__(self, message: str, *, query: str, engine: str) -> None:
         self.query = query
         self.engine = engine
-        super().__init__(f"[{engine}] {message}")
+        super().__init__(f"[{engine}] {message}") # Üst sınıfın (CopilotError / Exception) yapıcı metodunu (__init__) çağırır.
 
 
 class MCPConnectionError(CopilotError):
@@ -60,4 +61,4 @@ class MaxRetriesExceeded(CopilotError):  # noqa: N818 — "Exceeded" durumu net 
         self.attempts = attempts
         self.last_error = last_error
         # Mesajı Zenginleştirme
-        super().__init__(f"Failed after {attempts} attempts. Last error: {last_error}")
+        super().__init__(f"Failed after {attempts} attempts. Last error: {last_error}") # Üst sınıfın (CopilotError / Exception) yapıcı metodunu (__init__) çağırır.
