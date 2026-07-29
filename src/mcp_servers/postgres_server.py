@@ -31,9 +31,15 @@ mcp = FastMCP()
 def _connect() -> psycopg.Connection:
     """PostgreSQL bağlantıs - read only + statement timeout"""
     s = get_settings()
+
     #SQLAlchemy dialect prefix'ini kaldır
+    """Ortam değişkeninde SQLAlchemy formatında (postgresql+psycopg://...) bir URL tanımlanmış olabilir. Standart psycopg (v3) sürücüsü bu başlığı tanımadığı için düz postgresql:// formatına dönüştürülür.
+     Maskelenmiş verinin güvenli şekilde çekilmesini sağlar."""
     url = s.postgres_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
+
     conn = psycopg.connect(url, autocommit=False)
+    """Veritabanı imlecinin (cursor) işi bittiğinde veya blok içinde bir hata oluştuğunda cursor kaynaklarının otomatik olarak PostgreSQL sunucusuna iade edilmesini (close()) garanti eder.
+     Bellek ve bağlantı sızıntılarını (leak) önler."""
     with conn.cursor() as c:
         c.execute(f"SET statement_timeout = {s.postgres_statement_timeout_ms}")
         c.execute("SET default_transaction_read_only = on")
@@ -49,10 +55,14 @@ def _ms(start: float) -> int:
 @mcp.tool()
 def list_tables() -> QueryResult:
     start = time.perf_counter()
+
     try:
         s = get_settings()
         conn = _connect()
         with conn.cursor() as c:
+            """%s -> Parametreler SQL metniyle string birleştirme (f"WHERE schema = '{s.postgres_schema}'") şeklinde YAZILMAZ. Tuple (s.postgres_schema,) şeklinde sürücüye teslim edilir.
+             Bu sayede veritabanı sürücüsü gelen veriyi escape eder ve SQL Injection riskini tamamen ortadan kaldırır.
+             Tek elemanlı tuple yazımı için sonundaki virgül (val,) Python syntax kuralıdır."""
             c.execute(
                 "SELECT table_name FROM information_schema.tables "
                 "WHERE table_schema = %s AND table_type = 'BASE TABLE' "
@@ -64,6 +74,7 @@ def list_tables() -> QueryResult:
         elapsed = _ms(start)
         logger.info("list_tables_ok", count=len(data), elapsed_ms=elapsed)
         return QueryResult.ok(data=data, columns=["table"], elapsed_ms=elapsed)
+
     except Exception as exc:
         elapsed = _ms(start)
         logger.exception("list_tables_failed", elapsed_ms=elapsed)
@@ -127,6 +138,7 @@ def query_sql(sql: str) -> QueryResult:
         return QueryResult.fail(
             error_type="GuardrailViolation", message=exc.reason, elapsed_ms=elapsed
         )
+    
     except Exception as exc:
         elapsed = _ms(start)
         logger.exception("query_failed", elapsed_ms=elapsed, sql_preview=sql[:120])

@@ -1,9 +1,10 @@
 ##-- DATA_DIR altındaki Parquet/CSV dosyalarını view olarak kaydeder ve MCP protokolü üzerinden 4 tool açar: list_tables, describe_table, query_sql, preview_file.--#
 
-"""DuckDB MCP server — Parquet/CSV sorgulama.
+"""
+DuckDB MCP server — Parquet/CSV sorgulama.
 
-FastMCP + DuckDB. LLM/LangChain importu YOK (CLAUDE.md §2).
-Tool'lar hata durumunda exception fırlatmaz; QueryResult.fail(...) döner (§5).
+FastMCP + DuckDB. LLM/LangChain importu yok
+Tool'lar hata durumunda exception fırlatmaz; QueryResult.fail(...) döner.
 
 Ayrı süreç olarak çalışır:
     python -m src.mcp_servers.duckdb_server
@@ -12,6 +13,7 @@ Ayrı süreç olarak çalışır:
 
 from __future__ import annotations
 
+# FastMCP() -> Model Context Protocol sunucusunu kolayca kurmayı, tool'ları kaydetmeyi ve stdio üzerinden haberleşmeyi sağlayan yüksek seviyeli kütüphanedir.
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -33,7 +35,6 @@ _SUPPORTED_EXT: dict[str, str] = {
     ".csv": "read_csv_auto",
 }
 
-
 @lru_cache(maxsize=1)
 def _connect() -> duckdb.DuckDBPyConnection:
     """
@@ -43,6 +44,7 @@ def _connect() -> duckdb.DuckDBPyConnection:
 
     settings = get_settings()
     conn = duckdb.connect(settings.duckdb_path)
+    """PRAGMA -> DuckDB'nin kullanacağı CPU çekirdek sayısını ve maksimum bellek (RAM) limitini config.py üzerinden sınırlandırmak için kullanılır."""
     conn.execute(f"PRAGMA threads={settings.duckdb_threads}")
     conn.execute(f"PRAGMA memory_limit='{settings.duckdb_memory_limt}'")
 
@@ -59,12 +61,14 @@ def _register_views(conn: duckdb.DuckDBPyConnection, data_dir: Path) -> list[str
     registered: list[str] = []
     if not data_dir.exists():
         return registered
+
     for path in sorted(data_dir.iterdir()):
         if not path.is_file():
             continue
         reader = _SUPPORTED_EXT.get(path.suffix.lower())
         if reader is None:
             continue
+
         view_name = path.stem
         # _quote_ident + DATA_DIR altı path'ler; kullanıcı input'u değil
         conn.execute(
@@ -85,11 +89,12 @@ def _quote_ident(identifier: str) -> str:
 def _ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
 
-
+#@mcp.tool -> Altındaki Python fonksiyonunu dış dünyaya MCP Protokolü standardında bir "Tool (Araç)" olarak açar.MCP şemasına otomatik dönüşütrür.
 @mcp.tool()
 def list_tables() -> QueryResult:
     """DATA_DIR altında kayıtlı tabloları döner."""
     start = time.perf_counter()
+
     try:
         conn = _connect()
         rows = conn.execute(
@@ -100,12 +105,13 @@ def list_tables() -> QueryResult:
         elapsed = _ms(start)
         log.info("list_tables_ok", count=len(data), elapsed_ms=elapsed)
         return QueryResult.ok(data=data, columns=["table"], elapsed_ms=elapsed)
+
     except Exception as exc:
         elapsed = _ms(start)
         log.exception("list_tables_failed", elapsed_ms=elapsed)
         return QueryResult.fail(error_type=type(exc).__name__, message=str(exc), elapsed_ms=elapsed)
 
-
+#@mcp.tool -> Altındaki Python fonksiyonunu dış dünyaya MCP Protokolü standardında bir "Tool (Araç)" olarak açar.MCP şemasına otomatik dönüşütrür.
 @mcp.tool()
 def describe_table(table: str) -> QueryResult:
     """Verilen tablonun kolon şemasını döner.
@@ -113,7 +119,8 @@ def describe_table(table: str) -> QueryResult:
     Args:
         table: Kayıtlı view adı (list_tables çıktısından).
     """
-    start = time.perf_counter()
+    start = time.perf_counter()#işlemin ne kadar sürdüğü hesaplnaması için
+
     try:
         conn = _connect()
         rows = conn.execute(f"DESCRIBE {_quote_ident(table)}").fetchall()
@@ -128,16 +135,18 @@ def describe_table(table: str) -> QueryResult:
         elapsed = _ms(start)
         log.info("describe_table_ok", table=table, columns=len(data), elapsed_ms=elapsed)
         return QueryResult.ok(data=data, columns=["name", "dtype", "nullable"], elapsed_ms=elapsed)
+
     except GuardrailViolation as exc:
         return QueryResult.fail(
             error_type="GuardrailViolation", message=exc.reason, elapsed_ms=_ms(start)
         )
+
     except Exception as exc:
         elapsed = _ms(start)
         log.exception("describe_table_failed", table=table, elapsed_ms=elapsed)
         return QueryResult.fail(error_type=type(exc).__name__, message=str(exc), elapsed_ms=elapsed)
 
-
+#@mcp.tool -> Altındaki Python fonksiyonunu dış dünyaya MCP Protokolü standardında bir "Tool (Araç)" olarak açar.MCP şemasına otomatik dönüşütrür.
 @mcp.tool()
 def query_sql(sql: str) -> QueryResult:
     """Kullanıcının SQL sorgusunu guardrail'dan geçirip çalıştırır.
@@ -146,6 +155,7 @@ def query_sql(sql: str) -> QueryResult:
         sql: SELECT/WITH ile başlayan SQL.
     """
     start = time.perf_counter()
+
     try:
         safe_sql = validate_sql(sql)
         conn = _connect()
@@ -155,6 +165,7 @@ def query_sql(sql: str) -> QueryResult:
         data = [dict(zip(columns, row, strict=True)) for row in rows]
         elapsed = _ms(start)
         log.info("query_ok", rows=len(data), elapsed_ms=elapsed, sql_preview=sql[:120])
+
         return QueryResult.ok(data=data, columns=columns, elapsed_ms=elapsed)
     except GuardrailViolation as exc:
         elapsed = _ms(start)
@@ -162,21 +173,23 @@ def query_sql(sql: str) -> QueryResult:
         return QueryResult.fail(
             error_type="GuardrailViolation", message=exc.reason, elapsed_ms=elapsed
         )
+
     except Exception as exc:
         elapsed = _ms(start)
         log.exception("query_failed", elapsed_ms=elapsed, sql_preview=sql[:120])
         return QueryResult.fail(error_type=type(exc).__name__, message=str(exc), elapsed_ms=elapsed)
 
-
+#@mcp.tool -> Altındaki Python fonksiyonunu dış dünyaya MCP Protokolü standardında bir "Tool (Araç)" olarak açar.MCP şemasına otomatik dönüşütrür.
 @mcp.tool()
 def preview_file(path: str, limit: int = 10) -> QueryResult:
-    """DATA_DIR altındaki bir dosyanın ilk N satırını gösterir.
-
+    """
+    DATA_DIR altındaki bir dosyanın ilk N satırını gösterir.
     Args:
         path: Dosya yolu (DATA_DIR altında olmalı).
         limit: Kaç satır (1-100 arası, varsayılan 10).
     """
     start = time.perf_counter()
+
     try:
         safe_path = validate_path(path)
         reader = _SUPPORTED_EXT.get(safe_path.suffix.lower())
@@ -194,12 +207,14 @@ def preview_file(path: str, limit: int = 10) -> QueryResult:
         elapsed = _ms(start)
         log.info("preview_ok", path=str(safe_path), rows=len(data), elapsed_ms=elapsed)
         return QueryResult.ok(data=data, columns=columns, elapsed_ms=elapsed)
+
     except GuardrailViolation as exc:
         elapsed = _ms(start)
         log.warning("preview_blocked", reason=exc.reason, path=path)
         return QueryResult.fail(
             error_type="GuardrailViolation", message=exc.reason, elapsed_ms=elapsed
         )
+
     except Exception as exc:
         elapsed = _ms(start)
         log.exception("preview_failed", path=path, elapsed_ms=elapsed)

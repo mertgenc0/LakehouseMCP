@@ -38,13 +38,27 @@ class MCPClient:
         self.command = command
         self.args = args
         self.timeout = timeout
+        """
+        AsyncExitStack:
+            *Birden fazla asenkron context manager'ı dinamik olarak yöneten standart kütüphane aracıdır.
+            * Eğer ClientSession açılırken bir hata oluşursa, daha önce açılmış olan stdio_client bağlantısının da güvenle kapatılmasını sağlar.
+            Temizlik işlemlerini LIFO (Last-In-First-Out / Son giren ilk çıkar) sırasıyla yürütür.
+            
+        ClientSession:
+            *Model Context Protocol resmi Python SDK'sının istemci oturum yöneticisidir; tool listeleme ve tool çağırma (RPC) taleplerini yönetir.
+        """
         self._session: ClientSession | None = None
         self._stack: AsyncExitStack | None = None
 
+    """
+    async with duckdb_client() as client: yazıldığında Python otomatik olarak önce __aenter__ metodunu çalıştırır ve dönen MCPClient örneğini client değişkenine bağlar.
+    Bloktan çıkılırken (hata çıksa dahi) __aexit__ çalışır ve bağlantıları kapatır.
+    """
     async def __aenter__(self) -> MCPClient:
         stack = AsyncExitStack()
         try:
             params = StdioServerParameters(command=self.command, args=self.args, env=None)
+            # MCP sunucu sürecini (python -m src.mcp_servers.duckdb_server) başlatıp stdin ve stdout kanalları üzerinden veri akış kanalı kurar.
             read, write = await stack.enter_async_context(stdio_client(params))
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
@@ -52,16 +66,12 @@ class MCPClient:
             self._stack = stack
             logger.info("mcp_connected", server=self.name)
             return self
+
         except Exception as exc:
             await stack.aclose()
             raise MCPConnectionError(f"MCP Sunucusuna Bağlnamadı ({self.name}): {exc}") from exc
 
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None,) -> None:
         if self._stack is not None:
             await self._stack.aclose()
         self._session = None
