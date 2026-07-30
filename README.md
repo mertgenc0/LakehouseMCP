@@ -19,7 +19,6 @@ User Question
                                             summarize ──► Answer
 ```
 
-Detailed architectural contract: [CLAUDE.md](./CLAUDE.md).
 
 ---
 
@@ -203,10 +202,3 @@ When the CLI runs:
 - **`logs/copilot.log`:** JSON lines (for `grep` / `jq` / log aggregators)
 
 For a quieter console: `python main.py 2>/dev/null` (logs still write to file).
-
----
-
-## License / Contribution
-
-Learning / portfolio project. `CLAUDE.md` is the single source of truth —
-read it before making code changes.
