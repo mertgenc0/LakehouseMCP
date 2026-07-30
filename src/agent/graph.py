@@ -1,5 +1,6 @@
-"""LangGraph StateGraph derlemesi + self-correction routing.
-
+##--Projemizin Orkestrasyon ve Akış Kontrol (Orchestration & Graph Execution) Katmanı’dır--##
+"""
+LangGraph StateGraph derlemesi + self-correction routing.
 Akış:
 
     START
@@ -20,10 +21,6 @@ Akış:
                     │                └─► mcp_tool_execution (loop)
                     │                                 │
                     └───────────► END ◄───────────────┘
-
-Self-correction loop `error_analysis → mcp_tool_execution` üzerinde döner.
-`attempt >= MAX_RETRIES` olunca give_up node'u final_answer'ı doldurur, END'e gider.
-CLAUDE.md §5: "graph sessizce None dönmez, açıklayıcı bir başarısızlık mesajıyla sonlanır."
 """
 
 from __future__ import annotations
@@ -62,7 +59,7 @@ async def give_up(state: AgentState) -> AgentState:
 
 
 def _route_after_execution(state: AgentState) -> Literal["success", "retry", "give_up"]:
-    """mcp_tool_execution sonrası yönlendirme — tek yer, tek kural (CLAUDE.md §5)."""
+    """mcp_tool_execution sonrası yönlendirme — tek yer, tek kural sonuç var ise succes yoksa max retries geçene kadar devam değilse pes et."""
     if state.get("result") is not None:
         return "success"
     if state.get("attempt", 0) >= get_settings().max_retries:
@@ -72,6 +69,7 @@ def _route_after_execution(state: AgentState) -> Literal["success", "retry", "gi
 
 def build_graph() -> Any:
     """StateGraph'ı düğümlerle ve edge'lerle inşa edip compile eder."""
+    # LangGraph StateGraph nesnesini oluşturur, düğümleri/çizgileri ekler ve çalıştırılabilir bir grafik haline getirip derler
     g = StateGraph(AgentState)
 
     g.add_node("schema_discovery", schema_discovery)
@@ -103,7 +101,13 @@ def build_graph() -> Any:
 
 
 async def run(question: str) -> AgentState:
-    """Agent'ı bir soru ile çalıştırır ve son state'i döner."""
+    """
+     Dış dünyadan (örneğin main.py CLI arayüzünden) gelen soruyu alır, başlangıç durumunu (initial = {"question": question}) hazırlar, derlenmiş grafiği
+    asenkron olarak çalıştırır (graph.ainvoke(initial)) ve oluşan son state'i döndürür.
+
+     Syntax/Semantik: cast(AgentState, final_state) ifadesi kullanılır. ainvoke geriye genel bir dict döndüğü için tip denetleyicisi mypy'ye bu çıktının
+    AgentState tipinde olduğunu bildirir.
+    """
     graph = build_graph()
     initial: AgentState = {"question": question}
     log.info("run_start", question=question[:120])

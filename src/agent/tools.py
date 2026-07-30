@@ -1,5 +1,5 @@
 ##--MCP tool'larını LangChain Tool nesnelerine sarar; böylece LLM function-calling ile "hangi tool'u ne parametrelerle çağıracağım" kararını verebilir.--##
-
+#MCP istemcisi ile LangChain / LLM dünyasını birbirine bağlayan adaptör katmanı
 """
 LangChain Tool adapter'ları — MCP tool'larını LLM'in görebileceği forma çevirir.
 Agent bu tool'ları LLM'e bind eder; LLM function-calling ile hangisini çağıracağına
@@ -28,7 +28,8 @@ log = get_logger(__name__, component="agent_tools")
 # Input schemas — LLM function-calling parametrelerini bunlardan üretir
 class QuerySqlInput(BaseModel):
     sql: str = Field(
-        ...,
+        ...,#... -> bu parametrenin zorunlu (required) olduğunu belirtir.
+        #description -> OpenAI API'sine gönderilen JSON Schema'ya aynen eklenir.
         description=(
             "SELECT veya WITH ile başlayan tek statement SQL. "
             "Guardrail otomatik LIMIT ekler, DDL/DML reddedilir."
@@ -45,6 +46,7 @@ async def _call(tool: str, arguments: dict[str, Any]) -> str:
     """MCP tool çağrısı yapar, sonucu LLM için JSON string olarak döner."""
     async with duckdb_client() as client:
         result = await client.call_tool(tool, arguments)
+
     log.info("tool_called", tool=tool, status=result.get("status"))
     return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -78,7 +80,7 @@ describe_table_tool = StructuredTool.from_function(
         "Verilen tablonun kolon adlarını, tiplerini ve nullable bilgisini döner. "
         "SQL yazmadan ÖNCE hangi kolonlar var öğrenmek için çağır."
     ),
-    args_schema=DescribeTableInput,
+    args_schema=DescribeTableInput,# DescribeTableInput: Parametre tip kontrolünü ve LLM schema tanımını hazırlamak için Pydantic modelini bağlar.
 )
 
 query_sql_tool = StructuredTool.from_function(
@@ -93,4 +95,5 @@ query_sql_tool = StructuredTool.from_function(
     args_schema=QuerySqlInput,
 )
 
+#Grafiğin ve düğümlerin hızlıca erişebilmesi için tanımlanan tüm LangChain araçlarını bir liste halinde toplar.
 ALL_TOOLS = [list_tables_tool, describe_table_tool, query_sql_tool]

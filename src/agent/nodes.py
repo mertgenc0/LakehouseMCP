@@ -1,4 +1,5 @@
-"""LangGraph agent node functions.
+"""
+LangGraph agent node functions.
 
 Her node saf async fonksiyon: AgentState alır, güncellenmiş kısmi state döner.
 CLAUDE.md §5: node'lar tamamen bağımsız, I/O dışında global mutasyon yok.
@@ -33,6 +34,7 @@ from src.mcp_servers.schemas import QueryResult
 
 log = get_logger(__name__, component="agent_nodes")
 
+#DOTALL, MULTİLİNE:LLM çıktısındaki SQL bloklarını ve -- SOURCE: etiketlerini satır bağımsız yakalamak için kullanılan regex derleyicileridir.
 _FENCE_RE = re.compile(r"```(?:sql)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 _SOURCE_HINT_RE = re.compile(r"^\s*--\s*SOURCE\s*:\s*(\w+)\s*$", re.IGNORECASE | re.MULTILINE)
 
@@ -44,7 +46,7 @@ _SOURCE_FACTORIES: dict[Source, Any] = {
 
 
 # LLM factory
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=1) # Süreç boyunca tek bir ChatOpenAI nesnesi üretilerek hafızada tutulur.
 def _llm() -> ChatOpenAI:
     """ChatOpenAI singleton — process başına tek instance."""
     s = get_settings()
@@ -64,15 +66,15 @@ def _clean_sql(raw: Any) -> str:
     """LLM çıktısındaki kod fence ve fazla boşlukları temizler."""
     text = raw if isinstance(raw, str) else str(raw)
     text = text.strip()
-    match = _FENCE_RE.search(text)
+    match = _FENCE_RE.search(text) # regex'i (re.compile) ile kod çitlerini yakalar ve temizler.
     if match:
         text = match.group(1).strip()
     return text.rstrip(";").strip()
 
 
 def _parse_source_and_sql(raw: Any) -> tuple[Source, str]:
-    """LLM çıktısından '-- SOURCE: xxx' etiketini ve altındaki SQL'i ayıklar.
-
+    """
+    LLM çıktısından '-- SOURCE: xxx' etiketini ve altındaki SQL'i ayıklar.
     Etiket yoksa varsayılan olarak 'duckdb' döner (geriye uyumlu).
     """
     text = _clean_sql(raw)
@@ -86,10 +88,10 @@ def _parse_source_and_sql(raw: Any) -> tuple[Source, str]:
     return source, sql_only
 
 
-async def _collect_source_schema(
-    source: Source, client_factory: Any
-) -> dict[str, list[dict[str, Any]]]:
-    """Tek bir MCP kaynağından tüm tabloların şemasını çeker."""
+async def _collect_source_schema(source: Source, client_factory: Any) -> dict[str, list[dict[str, Any]]]:
+    """
+    Tek bir MCP kaynağından tüm tabloların şemasını çeker.Verilen bir MCP sunucusuna asenkron bağlanarak (async with client_factory()) mevcut tüm tabloları ve bu tabloların kolon şemalarını çeker.
+    """
     client: MCPClient
     async with client_factory() as client:
         tables_resp = await client.call_tool("list_tables", {})
@@ -104,7 +106,10 @@ async def _collect_source_schema(
 
 # Node 1: schema_discovery
 async def schema_discovery(state: AgentState) -> AgentState:
-    """Her iki MCP kaynağını da sorgular; bir kaynak düşse diğeriyle devam eder."""
+    """
+    Her iki MCP kaynağını da sorgular; bir kaynak düşse diğeriyle devam eder.
+    LLM'in veritabanında hangi tabloların ve kolonların olduğunu bilmesi için gerekli olan şema bağlamını hazırlar.
+    """
     log.info("node_start", node="schema_discovery")
     schemas: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for source, factory in _SOURCE_FACTORIES.items():
@@ -124,7 +129,10 @@ async def schema_discovery(state: AgentState) -> AgentState:
 
 # Node 2: sql_generation
 async def sql_generation(state: AgentState) -> AgentState:
-    """LLM ile ilk SQL'i üret. attempt sayacını 1'e ayarlar."""
+    """
+    Kullanıcının doğal dildeki sorusunu ve schema_context bilgisini alarak LLM'e ilk SQL sorgusunu ürettirir.
+    Deneme sayısını 1 yapar (attempt = 1), üretilen SQL'i ve seçilen veri kaynağını (source) state'e yazar.
+    """
     attempt = state.get("attempt", 0) + 1
     log.info("node_start", node="sql_generation", attempt=attempt)
 
@@ -140,7 +148,12 @@ async def sql_generation(state: AgentState) -> AgentState:
 
 # Node 3: mcp_tool_execution
 async def mcp_tool_execution(state: AgentState) -> AgentState:
-    """State'teki source'a göre doğru MCP kaynağını çağırır."""
+    """
+    state["sql"] sorgusunu, belirlenen state["source"] üzerindeki MCP sunucusunda (query_sql tool'u ile) çalıştırır.
+    Sorgu Başarılıysa: QueryResult nesnesini result anahtarına koyar.
+    Sorgu Hatalıysa: Çökmez! last_error ve last_error_type alanlarını doldurarak hatayı self-correction döngüsüne teslim eder.,
+    """
+
     source: Source = state.get("source", "duckdb")
     factory = _SOURCE_FACTORIES[source]
     log.info("node_start", node="mcp_tool_execution", source=source)
@@ -171,7 +184,10 @@ async def mcp_tool_execution(state: AgentState) -> AgentState:
 
 # Node 4: error_analysis
 async def error_analysis(state: AgentState) -> AgentState:
-    """Hatayı LLM'e ver, düzeltilmiş SQL üret. attempt sayacını artırır."""
+    """
+    Patlayan SQL sorgusunu, veritabanının döndürdüğü ham hata mesajını ve hata tipini alıp LLM'e sunar ve düzeltilmiş yeni bir SQL ürettirir.
+    Projedeki Rolü: Self-correction (kendi kendini düzeltme) mekanizmasının karar düğümüdür. attempt sayısını 1 artırır.
+    """
     attempt = state.get("attempt", 0) + 1
     log.info("node_start", node="error_analysis", attempt=attempt)
 
@@ -190,7 +206,7 @@ async def error_analysis(state: AgentState) -> AgentState:
 
 # Node 5: summarize
 async def summarize(state: AgentState) -> AgentState:
-    """Başarılı sonucu iş diliyle özetle."""
+    """Veritabanından başarıyla dönen ham QueryResult verisini (LLM prompt'unu şişirmemek için ilk 20 satırı) alır ve SUMMARIZE_SYSTEM talimatıyla Türkçe, anlaşılır bir iş dili özetine çevirir.."""
     log.info("node_start", node="summarize")
     result = state["result"]
     # Prompt'u şişirmemek için ilk 20 satır yeter — row_count zaten payload'da

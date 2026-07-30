@@ -1,154 +1,166 @@
 # MCP-Based Autonomous Data Lakehouse Copilot
 
-Doğal dilde sorulan analitik soruları anlayıp, **MCP (Model Context Protocol)** üzerinden
-DuckDB (Parquet/CSV) ve PostgreSQL veri kaynaklarına erişen; SQL üretip çalıştıran, hata
-alırsa **LangGraph self-correction loop** ile kendini düzelten ve sonucu iş diliyle
-özetleyen otonom bir veri analiz ajanı.
+An autonomous data analytics agent that understands natural-language questions,
+accesses **DuckDB (Parquet/CSV)** and **PostgreSQL** data sources through the
+**Model Context Protocol (MCP)**, generates and executes SQL, self-corrects on
+failure via a **LangGraph state machine**, and summarizes results in business
+language.
 
 ```
-Kullanıcı Sorusu
+User Question
       │
       ▼
 [LangGraph Agent] ──► schema_discovery ──► sql_generation
       ▲                                          │
       │                                          ▼
       └────── error_analysis ◄── validate ── mcp_tool_execution
-                  (max N retry)                  │
+                  (max N retries)                │
                                                  ▼
-                                            summarize ──► Cevap
+                                            summarize ──► Answer
 ```
 
-Detaylı mimari sözleşme için: [CLAUDE.md](./CLAUDE.md).
+Detailed architectural contract: [CLAUDE.md](./CLAUDE.md).
 
 ---
 
-## Kurulum
+## Installation
 
-Gereken: **Python 3.11+**, Node.js (yalnız MCP Inspector için, opsiyonel).
+Requirements: **Python 3.11+**, Node.js (only for MCP Inspector, optional).
 
 ```bash
-# 1. Sanal ortam
+# 1. Virtual environment
 python3.11 -m venv .venv
 source .venv/bin/activate
 
-# 2. Bağımlılıklar
+# 2. Dependencies
 pip install -r requirements.txt
 
-# 3. Ortam değişkenleri
+# 3. Environment variables
 cp .env.example .env
-# .env'i aç, en azından OPENAI_API_KEY'i doldur
+# Edit .env — at minimum fill in OPENAI_API_KEY
 
-# 4. Örnek veri (Parquet: customers, products, orders)
+# 4. Seed data (Parquet: customers, products, orders)
 python -m scripts.seed_data
 ```
 
+For PostgreSQL support (optional): install PostgreSQL locally, create the
+`lakehouse` database with a read-only role, update `POSTGRES_URL` in `.env`, and
+run `python -m scripts.seed_postgres`.
+
 ---
 
-## Çalıştırma
+## Running
 
-### CLI — tek soru
+### CLI — single question
 ```bash
-python main.py --question "En çok kazanan 3 kategori nedir?"
+python main.py --question "What are the top 3 categories by revenue?"
 ```
 
-### CLI — interaktif REPL
+### CLI — interactive REPL
 ```bash
 python main.py
-soru › İstanbul'da kaç müşteri var?
-soru › En pahalı 5 ürün nedir?
+soru › How many customers are in Istanbul?
+soru › What are the top 5 most expensive products?
 soru › exit
 ```
 
-### MCP sunucusunu bağımsız test etmek (Inspector)
+### Testing the MCP server standalone (Inspector)
 ```bash
 npx @modelcontextprotocol/inspector python -m src.mcp_servers.duckdb_server
 ```
-Tarayıcıda açılan panelde tool'ları elle çağırabilirsin.
+Opens a browser panel where you can invoke tools manually.
 
 ---
 
-## Mimari — Katmanlar
+## Architecture — Layers
 
-| Katman | Dizin | Sorumluluk |
+| Layer | Directory | Responsibility |
 |---|---|---|
-| Presentation | `main.py` | Rich tabanlı CLI + REPL |
-| Orchestration | `src/agent/` | LangGraph state machine + node'lar + prompt'lar |
+| Presentation | `main.py` | Rich-powered CLI + REPL |
+| Orchestration | `src/agent/` | LangGraph state machine + nodes + prompts |
 | Client | `src/clients/` | Async MCP stdio client |
-| Server | `src/mcp_servers/` | FastMCP DuckDB sunucusu (LLM bilmez) |
-| Cross-cutting | `src/core/` | Config, logging, exception, guardrail |
-| Data | `data/processed/` | Parquet dosyaları (gitignore) |
+| Server | `src/mcp_servers/` | FastMCP DuckDB + PostgreSQL servers (no LLM knowledge) |
+| Cross-cutting | `src/core/` | Config, logging, exceptions, guardrails |
+| Data | `data/processed/` | Parquet files (gitignored) |
 
-**Kritik sınır kuralı:** Ajan doğrudan `duckdb.connect()` çağıramaz — veriye yalnızca MCP
-tool'ları üzerinden erişir. MCP sunucuları LLM veya LangChain import etmez.
-
----
-
-## Güvenlik — SQL Guardrail
-
-- Yalnızca `SELECT` / `WITH ... SELECT` sorguları çalıştırılır.
-- Yasak keyword'ler (`DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `CREATE`, `ATTACH`,
-  `COPY`, `INSTALL`, `LOAD`, `TRUNCATE`, `GRANT`, `REVOKE`, `VACUUM`, `SET`) engellenir.
-- Her sorguya otomatik `LIMIT` (varsayılan 1000) eklenir.
-- Dosya erişimi `DATA_DIR` altına kısıtlıdır (path traversal koruması).
-- String literal içindeki yasak keyword'ler false-positive üretmez.
+**Critical boundary rule:** the agent must not call `duckdb.connect()`
+directly — data is accessible only through MCP tools. MCP servers do not import
+LLM/LangChain code.
 
 ---
 
-## Kalite
+## Security — SQL Guardrail
+
+Defense-in-depth: application-layer parser + database-level enforcement.
+
+- Only `SELECT` / `WITH ... SELECT` statements are allowed.
+- Banned keywords (`DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `CREATE`,
+  `ATTACH`, `COPY`, `INSTALL`, `LOAD`, `TRUNCATE`, `GRANT`, `REVOKE`, `VACUUM`,
+  `SET`) are rejected via word-boundary regex (so `updated_at` ≠ `update`).
+- Automatic `LIMIT` (default 1000) is injected when missing.
+- File access is confined to `DATA_DIR` (path traversal protection).
+- Banned keywords inside string literals do not trigger false positives.
+- PostgreSQL sessions are pinned to `SET default_transaction_read_only = on`
+  and use a dedicated read-only role (`analytics_ro`).
+
+---
+
+## Quality
 
 ```bash
-ruff format . && ruff check .    # stil + lint
-mypy                              # tip denetimi (--strict)
-pytest --cov=src                  # test + coverage
+ruff format . && ruff check .    # style + lint
+mypy                              # type check (--strict)
+pytest --cov=src                  # tests + coverage
 ```
 
-Mevcut durum: **46/46 test yeşil, %92 coverage, ruff temiz, mypy --strict temiz.**
+Current status: **66/66 tests passing, ~93% coverage, ruff clean, mypy --strict clean.**
 
 ---
 
-## Konfigürasyon (`.env`)
+## Configuration (`.env`)
 
-Tam listesi ve varsayılanları için `.env.example`'a bak. Öne çıkanlar:
+See `.env.example` for the full list and defaults. Highlights:
 
-| Değişken | Ne için |
+| Variable | Purpose |
 |---|---|
-| `OPENAI_API_KEY` | Zorunlu, gpt-4o çağrıları için |
-| `OPENAI_MODEL` | Varsayılan `gpt-4o`, alternatif: `gpt-4o-mini` |
-| `MAX_RETRIES` | Self-correction loop üst sınırı (varsayılan 3) |
-| `MAX_ROWS_RETURNED` | Auto-LIMIT değeri (varsayılan 1000) |
+| `OPENAI_API_KEY` | Required for GPT-4o calls |
+| `OPENAI_MODEL` | Default `gpt-4o`, alternative: `gpt-4o-mini` |
+| `POSTGRES_URL` | PostgreSQL connection string (optional) |
+| `MAX_RETRIES` | Self-correction loop upper bound (default 3) |
+| `MAX_ROWS_RETURNED` | Auto-LIMIT value (default 1000) |
 | `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
-| `DATA_DIR` | Parquet dosyalarının konumu (varsayılan `./data/processed`) |
+| `DATA_DIR` | Location of Parquet files (default `./data/processed`) |
 
 ---
 
-## Ekran Görüntüleri
+## Screenshots
 
-### 1. Basit agregasyon — DuckDB kaynağı
+### 1. Simple aggregation — DuckDB source
 ```bash
 python main.py --question "En çok kazanan 3 kategori nedir?"
 ```
-![Basit agregasyon](docs/screenshots/01_top_categories.png)
+![Simple aggregation](docs/screenshots/01_top_categories.png)
 
-Agent DuckDB'yi seçer, JOIN + GROUP BY üretir, Türkçe iş diliyle özetler.
+The agent selects DuckDB, produces JOIN + GROUP BY, and summarizes in business
+Turkish.
 
-### 2. Karmaşık sorgu + zaman filtresi
+### 2. Complex query + time filter
 ```bash
 python main.py --question "2024'ün ikinci yarısında kategori bazlı sipariş sayısı nedir?"
 ```
-![Karmaşık sorgu](docs/screenshots/04_complex_query.png)
+![Complex query](docs/screenshots/04_complex_query.png)
 
-WHERE + GROUP BY birlikte kullanılır.
+Combines WHERE + GROUP BY with date filtering.
 
-### 3. İnteraktif REPL
+### 3. Interactive REPL
 ```bash
 python main.py
 ```
 ![REPL](docs/screenshots/05_repl.png)
 
-Arka arkaya soru sorulabilir; `exit`/`quit`/`Ctrl+C` ile çıkılır.
+Ask multiple questions back-to-back; exit with `exit` / `quit` / `Ctrl+C`.
 
-
-### 7. Guardrail bloğu (developer test)
+### 4. Guardrail block (developer test)
 ```bash
 python -c "
 import asyncio
@@ -164,35 +176,37 @@ asyncio.run(main())
 ```
 ![Guardrail](docs/screenshots/07_guardrail_block.png)
 
-DELETE denenirse `GuardrailViolation` döner; process çökmez, structured error envelope.
+Attempting a `DELETE` returns a `GuardrailViolation`; the process does not
+crash — it returns a structured error envelope.
 
 ---
 
-## Örnek Sorular
+## Example Questions
 
-Seed data ile denenmiş, çalıştığı doğrulanmış sorgular:
+Verified against the seeded dataset:
 
-- *"En çok kazanan 3 kategori nedir?"*
-- *"İstanbul'da kaç müşteri var?"*
-- *"Her müşterinin toplam siparişi ve kayıt tarihi, ilk 5."*
-- *"KOBİ segmentindeki müşterilerin toplam harcaması?"*
-- *"En pahalı 10 ürünün kategorileri?"*
-- *"Postgres'teki müşterilerden Ankara'da yaşayanlar?"*
-- *"Parquet'teki en çok satan 5 ürün?"*
-
----
-
-## Log Akışı
-
-CLI çalışırken:
-- **Konsol:** Rich formatlı çıktı (Soru, SQL, Sonuç tablosu, Cevap paneli)
-- **stderr:** structlog INFO satırları (agent akışını izlemek için)
-- **`logs/copilot.log`:** JSON satırları (grep/jq/aggregator için)
-
-Sessiz konsol için: `python main.py 2>/dev/null` (log dosyaya yine yazılır).
+- *"What are the top 3 categories by revenue?"*
+- *"How many customers are in Istanbul?"*
+- *"For each customer, show total orders and signup date — first 5."*
+- *"Total spend by KOBİ segment customers?"*
+- *"Categories of the top 10 most expensive products?"*
+- *"Customers from PostgreSQL who live in Ankara?"*
+- *"Top 5 best-selling products from Parquet?"*
 
 ---
 
-## Lisans / Katkı
+## Log Stream
 
-Learning/portfolio projesi.
+When the CLI runs:
+- **Console:** Rich-formatted output (Question, SQL, Result table, Answer panel)
+- **stderr:** structlog INFO lines (to trace the agent flow)
+- **`logs/copilot.log`:** JSON lines (for `grep` / `jq` / log aggregators)
+
+For a quieter console: `python main.py 2>/dev/null` (logs still write to file).
+
+---
+
+## License / Contribution
+
+Learning / portfolio project. `CLAUDE.md` is the single source of truth —
+read it before making code changes.

@@ -8,13 +8,13 @@ node'lar saf — State alır, güncellenmiş kısmi State döner.
 """
 
 from __future__ import annotations
-
+# Typedict -> typing modülünden gelen, dict (sözlük) yapılarına statik tip kontrolü kazandıran bir sınıftır.
 from typing import Literal, TypedDict
 
 from src.mcp_servers.schemas import QueryResult
 
 
-class AgentState(TypedDict, total=False):
+class AgentState(TypedDict, total=False): # total=False->bir TypedDict tanımlandığında sözlük oluşturulurken tüm alanların var olması zorunluluğu yoksayar.
     """
     Tüm node'lar arasında paylaşılan durum.
 
@@ -30,8 +30,8 @@ class AgentState(TypedDict, total=False):
     last_error: str  # DuckDB'nin döndürdüğü ham hata mesajı
     last_error_type: str  # `CatalogException`, `GuardrailViolation`, ...
 
-    # ---------- Başarılı sonuç (mcp_tool_execution) ----------
+    # Başarılı sonuç (mcp_tool_execution)
     result: QueryResult  # QueryResult zarfı
 
-    # ---------- Nihai cevap (summarize node) ----------
+    # Nihai cevap (summarize node)
     final_answer: str  # Kullanıcıya sunulacak Türkçe özet
