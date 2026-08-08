@@ -26,7 +26,8 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: SecretStr  # SecretStr -> Hassas değişkenler için sunulmuştur --- print(openai_api_key) ->  sk-***********
     openai_model: str = "gpt-4o"
-    openai_temperature: float = 0.0
+    openai_sql_temperature: float = 0.0      # SQL üretimi: deterministik
+    openai_summary_temperature: float = 0.3  # Özetleme: hafif yaratıcılık
     openai_max_tokens: int = 4096
     openai_request_timeout: int = 60
     openai_base_url: str | None = None
@@ -61,7 +62,15 @@ class Settings(BaseSettings):
         ]  # NoDecoda ->JSON parse denemesi yok.
     )
     mcp_tool_timeout: int = 60
+    mcp_transport: Literal["stdio", "http"] = "stdio"
 
+    # HTTP transport (MCP_TRANSPORT=http iken kullanılır)
+    mcp_duckdb_http_url: str = "http://127.0.0.1:8001/mcp"
+    mcp_duckdb_http_host: str = "127.0.0.1"
+    mcp_duckdb_http_port: int = 8001
+    mcp_postgres_http_url: str = "http://127.0.0.1:8002/mcp"
+    mcp_postgres_http_host: str = "127.0.0.1"
+    mcp_postgres_http_port: int = 8002
 
     # Agent / Guardrials
     max_retries: int = 3

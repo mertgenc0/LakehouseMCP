@@ -14,12 +14,9 @@ Beş node:
 
 from __future__ import annotations
 
-import re
-from functools import lru_cache
 from typing import Any, Literal
 
-from langchain_openai import ChatOpenAI
-
+from src.agent.llm import SQLOutput, get_sql_llm, get_summary_llm
 from src.agent.prompts import (
     build_error_analysis_prompt,
     build_sql_generation_prompt,
@@ -27,65 +24,36 @@ from src.agent.prompts import (
     format_schema_context,
 )
 from src.agent.state import AgentState
-from src.clients.mcp_client import MCPClient, duckdb_client, postgres_client
+from src.clients.mcp_client import (
+    MCPClient,
+    MCPHttpClient,
+    duckdb_client,
+    duckdb_http_client,
+    postgres_client,
+    postgres_http_client,
+)
 from src.config import get_settings
 from src.core.logging import get_logger
 from src.mcp_servers.schemas import QueryResult
 
 log = get_logger(__name__, component="agent_nodes")
 
-#DOTALL, MULTİLİNE:LLM çıktısındaki SQL bloklarını ve -- SOURCE: etiketlerini satır bağımsız yakalamak için kullanılan regex derleyicileridir.
-_FENCE_RE = re.compile(r"```(?:sql)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
-_SOURCE_HINT_RE = re.compile(r"^\s*--\s*SOURCE\s*:\s*(\w+)\s*$", re.IGNORECASE | re.MULTILINE)
-
 Source = Literal["duckdb", "postgres"]
-_SOURCE_FACTORIES: dict[Source, Any] = {
-    "duckdb": duckdb_client,
-    "postgres": postgres_client,
-}
+
+_STDIO_FACTORIES: dict[Source, Any] = {"duckdb": duckdb_client, "postgres": postgres_client}
+_HTTP_FACTORIES: dict[Source, Any] = {"duckdb": duckdb_http_client, "postgres": postgres_http_client}
 
 
-# LLM factory
-@lru_cache(maxsize=1) # Süreç boyunca tek bir ChatOpenAI nesnesi üretilerek hafızada tutulur.
-def _llm() -> ChatOpenAI:
-    """ChatOpenAI singleton — process başına tek instance."""
-    s = get_settings()
-    kwargs: dict[str, Any] = {
-        "model": s.openai_model,
-        "temperature": s.openai_temperature,
-        "max_tokens": s.openai_max_tokens,
-        "timeout": s.openai_request_timeout,
-        "api_key": s.openai_api_key.get_secret_value(),
-    }
-    if s.openai_base_url:
-        kwargs["base_url"] = s.openai_base_url
-    return ChatOpenAI(**kwargs)
-
-
-def _clean_sql(raw: Any) -> str:
-    """LLM çıktısındaki kod fence ve fazla boşlukları temizler."""
-    text = raw if isinstance(raw, str) else str(raw)
-    text = text.strip()
-    match = _FENCE_RE.search(text) # regex'i (re.compile) ile kod çitlerini yakalar ve temizler.
-    if match:
-        text = match.group(1).strip()
-    return text.rstrip(";").strip()
-
-
-def _parse_source_and_sql(raw: Any) -> tuple[Source, str]:
+def _source_factories() -> dict[Source, Any]:
     """
-    LLM çıktısından '-- SOURCE: xxx' etiketini ve altındaki SQL'i ayıklar.
-    Etiket yoksa varsayılan olarak 'duckdb' döner (geriye uyumlu).
+    MCP_TRANSPORT config'ine göre doğru client factory sözlüğünü döner.
+
+    Eski durum: sadece stdio fabrikaları vardı, dict sabit ve modül seviyesindeydi.
+    Yeni durum: MCP_TRANSPORT=stdio (default) → subprocess başlatır;
+                MCP_TRANSPORT=http → stateless HTTP endpointine bağlanır.
+    Config cache'li olduğundan bu çağrı her seferinde disk okumaz.
     """
-    text = _clean_sql(raw)
-    match = _SOURCE_HINT_RE.search(text)
-    if not match:
-        return "duckdb", text
-    value = match.group(1).strip().lower()
-    source: Source = "postgres" if value in {"postgres", "pg", "postgresql"} else "duckdb"
-    # SOURCE satırını SQL'den çıkar
-    sql_only = _SOURCE_HINT_RE.sub("", text, count=1).strip()
-    return source, sql_only
+    return _HTTP_FACTORIES if get_settings().mcp_transport == "http" else _STDIO_FACTORIES
 
 
 async def _collect_source_schema(source: Source, client_factory: Any) -> dict[str, list[dict[str, Any]]]:
@@ -112,7 +80,7 @@ async def schema_discovery(state: AgentState) -> AgentState:
     """
     log.info("node_start", node="schema_discovery")
     schemas: dict[str, dict[str, list[dict[str, Any]]]] = {}
-    for source, factory in _SOURCE_FACTORIES.items():
+    for source, factory in _source_factories().items():
         try:
             schemas[source] = await _collect_source_schema(source, factory)
         except Exception as exc:
@@ -131,7 +99,8 @@ async def schema_discovery(state: AgentState) -> AgentState:
 async def sql_generation(state: AgentState) -> AgentState:
     """
     Kullanıcının doğal dildeki sorusunu ve schema_context bilgisini alarak LLM'e ilk SQL sorgusunu ürettirir.
-    Deneme sayısını 1 yapar (attempt = 1), üretilen SQL'i ve seçilen veri kaynağını (source) state'e yazar.
+    get_sql_llm() structured output döndürür: SQLOutput(source, sql, rationale).
+    Regex veya string parse işlemi yok — Pydantic şeması garantiler.
     """
     attempt = state.get("attempt", 0) + 1
     log.info("node_start", node="sql_generation", attempt=attempt)
@@ -140,10 +109,9 @@ async def sql_generation(state: AgentState) -> AgentState:
         question=state["question"],
         schema_context=state["schema_context"],
     )
-    response = await _llm().ainvoke(messages)
-    source, sql = _parse_source_and_sql(response.content)
-    log.info("sql_generated", attempt=attempt, source=source, sql_preview=sql[:120])
-    return {"sql": sql, "source": source, "attempt": attempt}
+    output: SQLOutput = await get_sql_llm().ainvoke(messages)
+    log.info("sql_generated", attempt=attempt, source=output.source, rationale=output.rationale, sql_preview=output.sql[:120])
+    return {"sql": output.sql, "source": output.source, "attempt": attempt}
 
 
 # Node 3: mcp_tool_execution
@@ -155,7 +123,7 @@ async def mcp_tool_execution(state: AgentState) -> AgentState:
     """
 
     source: Source = state.get("source", "duckdb")
-    factory = _SOURCE_FACTORIES[source]
+    factory = _source_factories()[source]
     log.info("node_start", node="mcp_tool_execution", source=source)
     async with factory() as client:
         raw = await client.call_tool("query_sql", {"sql": state["sql"]})
@@ -186,7 +154,7 @@ async def mcp_tool_execution(state: AgentState) -> AgentState:
 async def error_analysis(state: AgentState) -> AgentState:
     """
     Patlayan SQL sorgusunu, veritabanının döndürdüğü ham hata mesajını ve hata tipini alıp LLM'e sunar ve düzeltilmiş yeni bir SQL ürettirir.
-    Projedeki Rolü: Self-correction (kendi kendini düzeltme) mekanizmasının karar düğümüdür. attempt sayısını 1 artırır.
+    sql_generation gibi structured output kullanır; düzeltilmiş sql + yeni source + rationale döner.
     """
     attempt = state.get("attempt", 0) + 1
     log.info("node_start", node="error_analysis", attempt=attempt)
@@ -198,10 +166,9 @@ async def error_analysis(state: AgentState) -> AgentState:
         error_type=state["last_error_type"],
         error_message=state["last_error"],
     )
-    response = await _llm().ainvoke(messages)
-    source, sql = _parse_source_and_sql(response.content)
-    log.info("sql_regenerated", attempt=attempt, source=source, sql_preview=sql[:120])
-    return {"sql": sql, "source": source, "attempt": attempt}
+    output: SQLOutput = await get_sql_llm().ainvoke(messages)
+    log.info("sql_regenerated", attempt=attempt, source=output.source, rationale=output.rationale, sql_preview=output.sql[:120])
+    return {"sql": output.sql, "source": output.source, "attempt": attempt}
 
 
 # Node 5: summarize
@@ -216,7 +183,7 @@ async def summarize(state: AgentState) -> AgentState:
         "data": result.data[:20],
     }
     messages = build_summarize_prompt(question=state["question"], result=payload)
-    response = await _llm().ainvoke(messages)
+    response = await get_summary_llm().ainvoke(messages)
     final = (
         response.content if isinstance(response.content, str) else str(response.content)
     ).strip()
