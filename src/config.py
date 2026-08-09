@@ -76,12 +76,18 @@ class Settings(BaseSettings):
     max_retries: int = 3
     max_rows_returned: int = 1000
     allow_write_queries: bool = False
-    query_timeout: int = 30
+    query_timeout_seconds: float = 30.0
 
     # Observability
     """env'de LOG_LEVEL=YARIM yazarsan pydantic başlangıçta hata fırlatır: "sadece bu 4 değerden biri olabilir". Runtime'da değil, başlangıçta yakalanır"""
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO" #Literal -> Değişkenin Alabileceği değerleri verilenlere göre ksıtlar
     log_file: Path = Path("./logs/copilot.log")
+
+    # LangSmith tracing (isteğe bağlı — key yoksa tracing devre dışı)
+    langchain_tracing_v2: bool = False
+    langchain_api_key: SecretStr | None = None
+    langchain_project: str = "lakehouse-copilot"
+    langchain_endpoint: str | None = None  # ör. https://eu.api.smith.langchain.com
 
 
     # field_validator: Pydantic kütüphanesine ait bir dekoratördür. Sınıftaki bir değişkene veri atanırken araya girer, veriyi yakalar, kontrol eder veya değiştirir, ardından onay verirse değişkene atar.

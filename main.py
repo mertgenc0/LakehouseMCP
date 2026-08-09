@@ -19,10 +19,10 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
-from src.agent.graph import run
 from src.agent.state import AgentState
 from src.config import get_settings
 from src.core.logging import configure_logging, get_logger
+from src.core.tracing import init_tracing
 
 app = typer.Typer(
     add_completion=False,
@@ -82,6 +82,7 @@ def _render_state(state: AgentState) -> None:
 # Runners
 async def _run_one(question: str) -> None:
     """Tek soru için agent'ı çalıştırır, sonucu render eder."""
+    from src.agent.graph import run  # noqa: PLC0415 — tracing init'ten sonra yüklenir
     try:
         with console.status("[cyan]Düşünüyorum...[/cyan]", spinner="dots"):
             state = await run(question)
@@ -124,6 +125,7 @@ def cli(
 ) -> None:
     """Lakehouse Copilot CLI."""
     configure_logging()
+    init_tracing()
     try:
         get_settings()
     except Exception as exc:

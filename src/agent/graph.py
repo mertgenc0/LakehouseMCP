@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, cast
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
 from src.agent.nodes import (
@@ -110,8 +111,17 @@ async def run(question: str) -> AgentState:
     """
     graph = build_graph()
     initial: AgentState = {"question": question}
+
+    # LangSmith'te her node'u ayrı trace olarak görünmesini ve
+    # soruyu metadata olarak taşımasını sağlar.
+    config = RunnableConfig(
+        run_name="lakehouse-copilot",
+        tags=["lakehouse-copilot"],
+        metadata={"question": question[:200]},
+    )
+
     log.info("run_start", question=question[:120])
-    final_state = await graph.ainvoke(initial)
+    final_state = await graph.ainvoke(initial, config=config)
     log.info(
         "run_end",
         has_answer="final_answer" in final_state,

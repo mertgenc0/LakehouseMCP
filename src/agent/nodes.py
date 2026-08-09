@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+import anyio
+
 from src.agent.llm import SQLOutput, get_sql_llm, get_summary_llm
 from src.agent.prompts import (
     build_error_analysis_prompt,
@@ -79,10 +81,14 @@ async def schema_discovery(state: AgentState) -> AgentState:
     LLM'in veritabanında hangi tabloların ve kolonların olduğunu bilmesi için gerekli olan şema bağlamını hazırlar.
     """
     log.info("node_start", node="schema_discovery")
+    timeout = get_settings().query_timeout_seconds
     schemas: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for source, factory in _source_factories().items():
         try:
-            schemas[source] = await _collect_source_schema(source, factory)
+            with anyio.fail_after(timeout):
+                schemas[source] = await _collect_source_schema(source, factory)
+        except TimeoutError:
+            log.warning("node_timeout", node="schema_discovery", source=source, timeout_s=timeout)
         except Exception as exc:
             log.warning("source_unavailable", source=source, error=str(exc)[:200])
 
@@ -124,9 +130,21 @@ async def mcp_tool_execution(state: AgentState) -> AgentState:
 
     source: Source = state.get("source", "duckdb")
     factory = _source_factories()[source]
+    timeout = get_settings().query_timeout_seconds
     log.info("node_start", node="mcp_tool_execution", source=source)
-    async with factory() as client:
-        raw = await client.call_tool("query_sql", {"sql": state["sql"]})
+    raw: dict[str, Any] | None = None
+    try:
+        with anyio.fail_after(timeout):
+            async with factory() as client:
+                raw = await client.call_tool("query_sql", {"sql": state["sql"]})
+    except TimeoutError:
+        log.error("node_timeout", node="mcp_tool_execution", timeout_s=timeout)
+        return {
+            "last_error": f"Sorgu {timeout:.0f}s içinde tamamlanamadı (timeout).",
+            "last_error_type": "TimeoutError",
+        }
+    if raw is None:
+        return {"last_error": "Sorgu sonucu alınamadı.", "last_error_type": "EmptyResult"}
 
     result = QueryResult(**raw)
     if result.status == "success":
