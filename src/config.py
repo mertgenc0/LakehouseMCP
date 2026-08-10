@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     max_rows_returned: int = 1000
     allow_write_queries: bool = False
     query_timeout_seconds: float = 30.0
+    approval_row_threshold: int = 100  # bu satırı aşan sorgular onay ister (0 = kapalı)
 
     # Observability
     """env'de LOG_LEVEL=YARIM yazarsan pydantic başlangıçta hata fırlatır: "sadece bu 4 değerden biri olabilir". Runtime'da değil, başlangıçta yakalanır"""

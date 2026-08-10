@@ -181,6 +181,29 @@ def query_sql(sql: str) -> QueryResult:
 
 #@mcp.tool -> Altındaki Python fonksiyonunu dış dünyaya MCP Protokolü standardında bir "Tool (Araç)" olarak açar.MCP şemasına otomatik dönüşütrür.
 @mcp.tool()
+def explain_sql(sql: str) -> QueryResult:
+    """EXPLAIN ile sorgu planını doğrular — veri çekmeden syntax/kolon hatalarını yakalar.
+
+    Args:
+        sql: Doğrulanacak SELECT/WITH sorgusu.
+    """
+    start = time.perf_counter()
+    try:
+        safe_sql = validate_sql(sql)
+        conn = _connect()
+        conn.execute(f"EXPLAIN {safe_sql}")
+        elapsed = _ms(start)
+        log.info("explain_ok", elapsed_ms=elapsed)
+        return QueryResult.ok(data=[{"valid": True}], columns=["valid"], elapsed_ms=elapsed)
+    except GuardrailViolation as exc:
+        return QueryResult.fail(error_type="GuardrailViolation", message=exc.reason, elapsed_ms=_ms(start))
+    except Exception as exc:
+        elapsed = _ms(start)
+        log.warning("explain_failed", error=str(exc)[:200], elapsed_ms=elapsed)
+        return QueryResult.fail(error_type=type(exc).__name__, message=str(exc), elapsed_ms=elapsed)
+
+
+@mcp.tool()
 def preview_file(path: str, limit: int = 10) -> QueryResult:
     """
     DATA_DIR altındaki bir dosyanın ilk N satırını gösterir.

@@ -2,8 +2,6 @@
 LangGraph agent node functions.
 
 Her node saf async fonksiyon: AgentState alır, güncellenmiş kısmi state döner.
-CLAUDE.md §5: node'lar tamamen bağımsız, I/O dışında global mutasyon yok.
-
 Beş node:
     schema_discovery    → list_tables + describe_table topla, schema_context üret
     sql_generation      → question + schema → SQL (ilk deneme)
@@ -14,9 +12,10 @@ Beş node:
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 import anyio
+from langgraph.types import interrupt
 
 from src.agent.llm import SQLOutput, get_sql_llm, get_summary_llm
 from src.agent.prompts import (
@@ -36,6 +35,7 @@ from src.clients.mcp_client import (
 )
 from src.config import get_settings
 from src.core.logging import get_logger
+from src.core.semantic_layer import build_semantic_context
 from src.mcp_servers.schemas import QueryResult
 
 log = get_logger(__name__, component="agent_nodes")
@@ -93,12 +93,87 @@ async def schema_discovery(state: AgentState) -> AgentState:
             log.warning("source_unavailable", source=source, error=str(exc)[:200])
 
     schema_context = format_schema_context(schemas)
+
+    semantic = build_semantic_context(schemas, get_settings().data_dir)
+    if semantic:
+        schema_context = schema_context + "\n\n" + semantic
+
     log.info(
         "schema_discovered",
         sources=list(schemas.keys()),
         chars=len(schema_context),
     )
     return {"schema_context": schema_context}
+
+
+# Node 1.5: sql_validation (dry-run)
+async def sql_validation(state: AgentState) -> AgentState:
+    """
+    EXPLAIN ile SQL'i veri çekmeden doğrular.
+    Hata varsa last_error doldurur — graph error_analysis'e yönlendirir.
+    Başarıysa boş dict döner, akış devam eder.
+    """
+    source: Source = state.get("source", "duckdb")
+    factory = _source_factories()[source]
+    log.info("node_start", node="sql_validation", source=source)
+
+    try:
+        async with factory() as client:
+            raw = await client.call_tool("explain_sql", {"sql": state["sql"]})
+        result = QueryResult(**raw)
+        if result.status == "success":
+            log.info("validation_ok", source=source)
+            return {}
+        log.warning("validation_failed", source=source, message=(result.message or "")[:200])
+        return {"last_error": result.message or "", "last_error_type": result.error_type or "ValidationError"}
+    except Exception as exc:
+        # explain_sql tool yoksa (postgres gibi) veya beklenmedik hata → geç, çalıştırsın
+        log.warning("validation_skipped", source=source, reason=str(exc)[:120])
+        return {}
+
+
+# Node 1.75: human_approval
+async def human_approval(state: AgentState) -> AgentState:
+    """
+    Tahmini satır sayısı APPROVAL_ROW_THRESHOLD'u aşarsa kullanıcı onayı ister.
+    Onay gelmezse final_answer set eder — graph END'e gider.
+    Threshold 0 ise devre dışı.
+    """
+    threshold = get_settings().approval_row_threshold
+    if threshold <= 0:
+        return {}
+
+    source: Source = state.get("source", "duckdb")
+    factory = _source_factories()[source]
+    log.info("node_start", node="human_approval", source=source)
+
+    estimated: int = 0
+    try:
+        count_sql = f"SELECT COUNT(*) AS __cnt FROM ({state['sql']}) __approval_sub"
+        async with factory() as client:
+            raw = await client.call_tool("query_sql", {"sql": count_sql})
+        result = QueryResult(**raw)
+        if result.status == "success" and result.data:
+            estimated = int(result.data[0].get("__cnt", 0))
+    except Exception as exc:
+        log.warning("approval_check_failed", reason=str(exc)[:120])
+        return {}
+
+    # interrupt() try dışında — NodeInterrupt exception yakalanmasın
+    if estimated > threshold:
+        log.warning("approval_required", estimated_rows=estimated, threshold=threshold)
+        decision: str = interrupt({
+            "estimated_rows": estimated,
+            "threshold": threshold,
+            "sql": state["sql"],
+            "source": source,
+        })
+        if str(decision).strip().lower() not in ("e", "evet", "y", "yes"):
+            log.info("approval_denied")
+            return {"final_answer": f"Sorgu iptal edildi (tahmini {estimated:,} satır, eşik {threshold:,})."}
+        log.info("approval_granted", estimated_rows=estimated)
+
+    return {}
 
 
 # Node 2: sql_generation

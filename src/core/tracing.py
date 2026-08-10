@@ -1,24 +1,12 @@
 """
 LangSmith tracing başlatıcı.
 
-Eski durum: Hiçbir gözlemlenebilirlik yoktu. Agent çalışınca terminalde structlog
-satırları görünürdü — hangi node ne kadar sürdü, kaç token harcandı, hangi retry'da
-geçildi görmek imkânsızdı.
-
-Yeni durum: init_tracing() process başında bir kez çağrılır. LANGCHAIN_TRACING_V2=true
-olduğunda LangChain otomatik olarak her LLM çağrısını, her LangGraph node'unu ve
-aralarındaki ilişkiyi LangSmith'e gönderir. Ek kod gerekmez — LangChain'in callback
-sistemi bunu arka planda halleder.
-
 LangSmith dashboard'unda her agent çalışması için şunlar görünür:
   - Her node (schema_discovery, sql_generation, ...) ve çalışma süresi
   - Her LLM çağrısında gönderilen prompt + alınan yanıt
   - Token kullanımı (prompt / completion / total)
   - Retry zinciri (attempt 1 → hata → attempt 2 → başarı)
   - Toplam maliyet tahmini
-
-API key yoksa veya LANGCHAIN_TRACING_V2=false ise tracing sessizce devre dışı
-kalır — uygulama normal çalışmaya devam eder.
 """
 
 from __future__ import annotations

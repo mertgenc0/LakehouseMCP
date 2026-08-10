@@ -132,7 +132,8 @@ async def llm_judge(
     agent_preview = json.dumps(agent_rows[:_JUDGE_MAX_ROWS], ensure_ascii=False, default=str)
     expected_preview = json.dumps(expected_rows[:_JUDGE_MAX_ROWS], ensure_ascii=False, default=str)
 
-    prompt = f"""Sen bir SQL eval hakemisin. Aşağıdaki soruya verilen agent cevabının doğru olup olmadığına karar ver.
+    prompt = f"""Sen bir SQL eval hakemisin. Amacın: agent'ın cevabının soruyu DOĞRU yanıtlayıp yanıtlamadığına karar vermek.
+Küçük format farklarına TAKILMA — önemli olan iş sorusunun doğru yanıtlanması.
 
 SORU: {question}
 
@@ -142,13 +143,20 @@ AGENT SONUCU ({len(agent_rows)} satır, ilk {min(len(agent_rows), _JUDGE_MAX_ROW
 REFERANS SONUÇ ({len(expected_rows)} satır, ilk {min(len(expected_rows), _JUDGE_MAX_ROWS)} gösteriliyor):
 {expected_preview}
 
-Değerlendirme kriterleri:
-- Soruyu doğru yanıtlıyor mu? (aynı satırlar, aynı sayısal değerler)
-- Kolon adları farklı olabilir — değerler önemli
-- Tarih formatı farklı olabilir (2024-01 vs 2024-01-01) ama aynı dönemi temsil ediyorsa kabul et
-- Fazla kolon varsa (agent expected'dan fazla döndürdüyse) sorun değil
-- Satır sayısı ve değerler uyuşuyorsa correct=true
-- Agent 0 satır döndürdüyse ve referans satır içeriyorsa correct=false"""
+KABUL ET (correct=true):
+- Aynı veri ama farklı ölçek: 0.58 ↔ 58.28 (oran vs yüzde), aynı sıralama korunuyorsa
+- Fazla kolon: agent beklenen kolonlara EK olarak fazladan kolon döndürdüyse
+- Farklı kolon adı: "net_revenue" ↔ "net_ciro" ↔ "total" — değerler aynıysa
+- Tarih formatı: "2024-01-01" ↔ "2024-01" — aynı dönemi gösteriyorsa
+- Fazla satır (zero-fill): agent her durumu göstermiş, referans sadece dolu olanları — temel değerler doğruysa
+- Küçük yuvarlama farkı: 6.03 ↔ 6.0 (aynı değerin farklı decimal gösterimi)
+- LAG sorusunda mutlak değişim ↔ yüzde değişim — her ikisi de soruyu yanıtlar
+
+REDDET (correct=false):
+- Temel sayısal değerler farklı (gerçekten yanlış hesaplama)
+- Yanlış tablo veya join kullanarak farklı veri döndürmüş
+- Agent 0 satır döndürmüş ama referansta satır var
+- Sorulan şeyin tamamen yanlış yorumu"""
 
     try:
         result: JudgeOutput = await llm.ainvoke(prompt)
@@ -306,6 +314,12 @@ def write_report(
 # Ana akış
 async def main(question_ids: list[str] | None, mock: bool) -> None:
     from src.config import get_settings
+    from src.core.logging import configure_logging
+    from src.core.tracing import init_tracing
+
+    configure_logging()
+    init_tracing()
+
     s = get_settings()
 
     questions = load_questions(question_ids)

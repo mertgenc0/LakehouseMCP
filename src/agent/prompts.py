@@ -26,8 +26,6 @@ SQL KURALLARI:
 - Yalnızca seçtiğin kaynağın şemasındaki tablo ve kolon adlarını kullan (case-sensitive).
 - SELECT * yerine ihtiyaç duyulan kolonları açıkça listele.
 - Aggregate sonuçlarını ROUND(x, 2) ile yuvarla.
-- NULL içerebilen alanlarda COALESCE(alan, 0) kullan (örn. discount_amount).
-- Ödenmemiş siparişler gibi eksik kayıt testlerinde LEFT JOIN + IS NULL yöntemi uygula.
 """
 
 ERROR_ANALYSIS_SYSTEM = """

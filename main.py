@@ -4,8 +4,6 @@ Kullanım:
     python main.py                            # interaktif REPL
     python main.py --question "..."           # tek soru sor, çık
     python main.py -q "..."                   # kısa form
-
-CLAUDE.md §2: Presentation katmanı. `asyncio.run` yalnızca burada.
 """
 
 from __future__ import annotations
@@ -80,12 +78,30 @@ def _render_state(state: AgentState) -> None:
 
 
 # Runners
+async def _approval_callback(payload: dict) -> str:
+    """human_approval interrupt'ı tetiklendiğinde kullanıcıya sorar."""
+    estimated = payload.get("estimated_rows", 0)
+    threshold = payload.get("threshold", 0)
+    sql_preview = str(payload.get("sql", ""))[:120]
+    console.print()
+    console.print(
+        Panel(
+            f"[yellow]Bu sorgu tahminen [bold]{estimated:,}[/bold] satır döndürecek "
+            f"(eşik: {threshold:,}).[/yellow]\n\n"
+            f"[dim]{sql_preview}...[/dim]",
+            title="[bold yellow]Onay Gerekiyor[/bold yellow]",
+            border_style="yellow",
+        )
+    )
+    return console.input("[bold yellow]Devam etmek istiyor musunuz? (e/h): [/bold yellow]").strip()
+
+
 async def _run_one(question: str) -> None:
     """Tek soru için agent'ı çalıştırır, sonucu render eder."""
     from src.agent.graph import run  # noqa: PLC0415 — tracing init'ten sonra yüklenir
     try:
         with console.status("[cyan]Düşünüyorum...[/cyan]", spinner="dots"):
-            state = await run(question)
+            state = await run(question, approval_callback=_approval_callback)
     except Exception as exc:
         log.exception("run_failed", question=question[:120])
         console.print(Panel(f"[red]Hata:[/red] {exc}", border_style="red"))
