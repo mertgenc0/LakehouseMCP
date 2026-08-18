@@ -1,204 +1,234 @@
 # MCP-Based Autonomous Data Lakehouse Copilot
 
-An autonomous data analytics agent that understands natural-language questions,
-accesses **DuckDB (Parquet/CSV)** and **PostgreSQL** data sources through the
-**Model Context Protocol (MCP)**, generates and executes SQL, self-corrects on
-failure via a **LangGraph state machine**, and summarizes results in business
-language.
+An autonomous data analytics agent that translates natural-language questions into SQL, executes them against **DuckDB (Parquet)** and **PostgreSQL** through the **Model Context Protocol (MCP)**, self-corrects on failure, and summarizes results in business language.
 
 ```
 User Question
       │
       ▼
-[LangGraph Agent] ──► schema_discovery ──► sql_generation
-      ▲                                          │
-      │                                          ▼
-      └────── error_analysis ◄── validate ── mcp_tool_execution
-                  (max N retries)                │
-                                                 ▼
-                                            summarize ──► Answer
+[LangGraph Agent]
+      │
+      ├─► schema_discovery  (MCP: list_tables + describe_table + semantic layer)
+      │
+      ├─► sql_generation    (LLM → structured SQL output)
+      │
+      ├─► sql_validation    (EXPLAIN — catches errors without fetching data)
+      │
+      ├─► human_approval    (row count estimate → user confirmation if > threshold)
+      │
+      ├─► mcp_tool_execution (query_sql via MCP)
+      │         │
+      │    ┌────┴────┐
+      │  retry    success
+      │    │         │
+      ├─► error_analysis   summarize ──► Answer
+      │   (LLM fixes SQL,
+      │    loops back)
+      └─► give_up (max retries exceeded)
 ```
-
 
 ---
 
-## Installation
+## Features
 
-Requirements: **Python 3.11+**, Node.js (only for MCP Inspector, optional).
+- **Dual data source:** DuckDB (Parquet files) + PostgreSQL, agent picks the right one per query
+- **Self-correction loop:** up to N retries with LLM-powered error analysis
+- **SQL dry-run validation:** EXPLAIN before execution — syntax/column errors caught without touching data
+- **Human-in-the-loop:** configurable row-count threshold triggers user confirmation before large queries
+- **Semantic layer:** auto enum discovery + FK inference injected into schema context
+- **Structured outputs:** Pydantic-validated LLM responses — no JSON parse errors
+- **SQL guardrails:** only SELECT/WITH allowed; banned keywords, auto LIMIT, path traversal protection
+- **LangSmith tracing:** every node, token count, and latency tracked (EU endpoint supported)
+- **Eval harness:** 25-question golden set, hybrid exact-match + LLM-judge scoring
+- **Per-node timeouts:** anyio cancel scopes prevent runaway queries from blocking the graph
+
+---
+
+## Demo
+
+### Terminal — Question & Answer
+
+![Terminal Demo](docs/screenshots/terminal_demo.png)
+
+![Terminal Demo 2](docs/screenshots/terminal_demo2.png)
+
+### LangSmith — Trace & Cost Breakdown
+
+![LangSmith Trace](docs/screenshots/langsmith_trace.png)
+
+---
+
+## Quick Start
 
 ```bash
-# 1. Virtual environment
-python3.11 -m venv .venv
-source .venv/bin/activate
-
-# 2. Dependencies
+python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 3. Environment variables
 cp .env.example .env
-# Edit .env — at minimum fill in OPENAI_API_KEY
+# Fill in OPENAI_API_KEY and POSTGRES_URL in .env
 
-# 4. Seed data (Parquet: customers, products, orders)
-python -m scripts.seed_data
+python scripts/seed_data.py
+python scripts/load_to_postgres.py --drop
+
+python main.py -q "Top 5 categories by revenue in 2024?"
 ```
-
-For PostgreSQL support (optional): install PostgreSQL locally, create the
-`lakehouse` database with a read-only role, update `POSTGRES_URL` in `.env`, and
-run `python -m scripts.seed_postgres`.
 
 ---
 
-## Running
+## Usage
 
-### CLI — single question
+### Single question
 ```bash
-python main.py --question "What are the top 3 categories by revenue?"
+python main.py --question "Ödeme kaydı olmayan siparişleri duruma göre say."
+python main.py -q "What are the top 5 products by margin?"
 ```
 
-### CLI — interactive REPL
+### Interactive REPL
 ```bash
 python main.py
-soru › How many customers are in Istanbul?
-soru › What are the top 5 most expensive products?
+soru › 2024'te en çok ciro yapan kategori?
+soru › Hiç sipariş vermemiş müşteri sayısı?
 soru › exit
 ```
 
-### Testing the MCP server standalone (Inspector)
+### Eval harness
+```bash
+python eval/run_eval.py --mock    # infrastructure test, no LLM calls
+python eval/run_eval.py --live    # real LLM, writes eval/report.md
+python eval/run_eval.py --live --questions q01,q05,q12
+```
+
+### Test MCP servers standalone
 ```bash
 npx @modelcontextprotocol/inspector python -m src.mcp_servers.duckdb_server
+npx @modelcontextprotocol/inspector python -m src.mcp_servers.postgres_server
 ```
-Opens a browser panel where you can invoke tools manually.
 
 ---
 
-## Architecture — Layers
+## Architecture
 
 | Layer | Directory | Responsibility |
 |---|---|---|
-| Presentation | `main.py` | Rich-powered CLI + REPL |
-| Orchestration | `src/agent/` | LangGraph state machine + nodes + prompts |
-| Client | `src/clients/` | Async MCP stdio client |
-| Server | `src/mcp_servers/` | FastMCP DuckDB + PostgreSQL servers (no LLM knowledge) |
-| Cross-cutting | `src/core/` | Config, logging, exceptions, guardrails |
+| Presentation | `main.py` | Rich CLI + REPL + human approval callback |
+| Orchestration | `src/agent/` | LangGraph state machine, nodes, prompts, LLM |
+| Client | `src/clients/` | Async MCP client (stdio + HTTP transport) |
+| Server | `src/mcp_servers/` | FastMCP DuckDB + PostgreSQL servers |
+| Semantic | `src/core/semantic_layer.py` | Enum discovery, FK inference |
+| Cross-cutting | `src/core/` | Config, logging, guardrails, tracing |
+| Eval | `eval/` | Golden set (25 questions), hybrid eval runner |
 | Data | `data/processed/` | Parquet files (gitignored) |
 
-**Critical boundary rule:** the agent must not call `duckdb.connect()`
-directly — data is accessible only through MCP tools. MCP servers do not import
-LLM/LangChain code.
+**Boundary rule:** agent accesses data only through MCP tools — never via direct `duckdb.connect()`. MCP servers have zero LLM/LangChain imports.
 
 ---
 
-## Security — SQL Guardrail
+## Data Model
 
-Defense-in-depth: application-layer parser + database-level enforcement.
+7-table e-commerce star schema designed to stress-test the agent:
 
-- Only `SELECT` / `WITH ... SELECT` statements are allowed.
-- Banned keywords (`DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `CREATE`,
-  `ATTACH`, `COPY`, `INSTALL`, `LOAD`, `TRUNCATE`, `GRANT`, `REVOKE`, `VACUUM`,
-  `SET`) are rejected via word-boundary regex (so `updated_at` ≠ `update`).
-- Automatic `LIMIT` (default 1000) is injected when missing.
-- File access is confined to `DATA_DIR` (path traversal protection).
-- Banned keywords inside string literals do not trigger false positives.
-- PostgreSQL sessions are pinned to `SET default_transaction_read_only = on`
-  and use a dedicated read-only role (`analytics_ro`).
+```
+categories ──(self-join: parent_category_id)
+    ▲
+products ──┐
+           │
+order_items ──► orders ──► customers
+                  ├──► payments  (missing for pending orders → LEFT JOIN test)
+                  └──► refunds   (only for refunded orders)
+```
+
+| Table | Rows | Key challenge |
+|---|---|---|
+| `categories` | 13 | Self-join for hierarchy |
+| `customers` | 1,000 | ~5% have no orders (anti-join test) |
+| `products` | 300 | `cost` column for margin calc |
+| `orders` | 5,000 | `shipped_at`/`delivered_at` nullable |
+| `order_items` | ~14,000 | `discount_amount` 65% NULL → COALESCE required |
+| `payments` | ~4,400 | Missing for `pending` orders |
+| `refunds` | ~330 | Sparse, LEFT JOIN required |
+
+---
+
+## Configuration
+
+Key `.env` variables (see `.env.example` for full list):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OPENAI_API_KEY` | — | Required |
+| `OPENAI_MODEL` | `gpt-4o` | SQL generation model |
+| `POSTGRES_URL` | — | PostgreSQL connection string |
+| `DATA_DIR` | `./data/processed` | Parquet files location |
+| `MCP_TRANSPORT` | `stdio` | `stdio` or `http` |
+| `MAX_RETRIES` | `3` | Self-correction loop limit |
+| `MAX_ROWS_RETURNED` | `1000` | Auto-LIMIT value |
+| `QUERY_TIMEOUT_SECONDS` | `30` | Per-node MCP timeout |
+| `APPROVAL_ROW_THRESHOLD` | `5000` | Human approval trigger (0 = off) |
+| `LANGCHAIN_TRACING_V2` | `false` | Enable LangSmith tracing |
+| `LANGCHAIN_ENDPOINT` | — | EU: `https://eu.api.smith.langchain.com` |
 
 ---
 
 ## Quality
 
 ```bash
-ruff format . && ruff check .    # style + lint
-mypy                              # type check (--strict)
-pytest --cov=src                  # tests + coverage
+ruff check . && black --check .   # lint + format
+mypy src/                          # type check (--strict)
+pytest -q                          # unit + integration tests
+python eval/run_eval.py --live     # text-to-SQL accuracy (eval/report.md)
 ```
-
-Current status: **66/66 tests passing, ~93% coverage, ruff clean, mypy --strict clean.**
 
 ---
 
-## Configuration (`.env`)
+## Observability — LangSmith
 
-See `.env.example` for the full list and defaults. Highlights:
+Every agent run is traced end-to-end in LangSmith. Each node appears as a separate span with token usage, latency, and metadata.
 
-| Variable | Purpose |
+### Setup
+
+```bash
+# .env
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=ls-...
+LANGCHAIN_PROJECT=lakehouse-copilot
+
+# EU bölgesindeysen:
+LANGCHAIN_ENDPOINT=https://eu.api.smith.langchain.com
+```
+
+### What you see per run
+
+| Span | Captured |
 |---|---|
-| `OPENAI_API_KEY` | Required for GPT-4o calls |
-| `OPENAI_MODEL` | Default `gpt-4o`, alternative: `gpt-4o-mini` |
-| `POSTGRES_URL` | PostgreSQL connection string (optional) |
-| `MAX_RETRIES` | Self-correction loop upper bound (default 3) |
-| `MAX_ROWS_RETURNED` | Auto-LIMIT value (default 1000) |
-| `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
-| `DATA_DIR` | Location of Parquet files (default `./data/processed`) |
+| `schema_discovery` | Tables fetched, schema context length, source (duckdb/postgres) |
+| `sql_generation` | Generated SQL, source choice, rationale, token count |
+| `sql_validation` | EXPLAIN result, validation pass/fail |
+| `human_approval` | Estimated row count, user decision |
+| `mcp_tool_execution` | Executed SQL, row count, elapsed ms, error if any |
+| `error_analysis` | Failed SQL, error type, corrected SQL, attempt number |
+| `summarize` | Final answer, token count |
+
+### Trace example
+
+```
+lakehouse-copilot run  (3.2s total)
+  ├── schema_discovery     0.8s   duckdb: 7 tables
+  ├── sql_generation       1.1s   → SELECT ... (attempt 1)
+  ├── sql_validation       0.1s   ✓ EXPLAIN passed
+  ├── human_approval       0.0s   est. 127 rows, below threshold
+  ├── mcp_tool_execution   0.4s   ✓ 127 rows / 38ms
+  └── summarize            0.8s   → final answer
+```
+
+In a retry scenario, the `mcp_tool_execution → error_analysis → mcp_tool_execution` chain appears as separate spans — you can see exactly which SQL failed, why, and how it was corrected.
 
 ---
 
-## Screenshots
+## Security
 
-### 1. Simple aggregation — DuckDB source
-```bash
-python main.py --question "En çok kazanan 3 kategori nedir?"
-```
-![Simple aggregation](docs/screenshots/01_top_categories.png)
-
-The agent selects DuckDB, produces JOIN + GROUP BY, and summarizes in business
-Turkish.
-
-### 2. Complex query + time filter
-```bash
-python main.py --question "2024'ün ikinci yarısında kategori bazlı sipariş sayısı nedir?"
-```
-![Complex query](docs/screenshots/04_complex_query.png)
-
-Combines WHERE + GROUP BY with date filtering.
-
-### 3. Interactive REPL
-```bash
-python main.py
-```
-![REPL](docs/screenshots/05_repl.png)
-
-Ask multiple questions back-to-back; exit with `exit` / `quit` / `Ctrl+C`.
-
-### 4. Guardrail block (developer test)
-```bash
-python -c "
-import asyncio
-from src.clients.mcp_client import duckdb_client
-
-async def main():
-    async with duckdb_client() as c:
-        r = await c.call_tool('query_sql', {'sql': 'DELETE FROM orders'})
-        print(r)
-
-asyncio.run(main())
-"
-```
-![Guardrail](docs/screenshots/07_guardrail_block.png)
-
-Attempting a `DELETE` returns a `GuardrailViolation`; the process does not
-crash — it returns a structured error envelope.
-
----
-
-## Example Questions
-
-Verified against the seeded dataset:
-
-- *"What are the top 3 categories by revenue?"*
-- *"How many customers are in Istanbul?"*
-- *"For each customer, show total orders and signup date — first 5."*
-- *"Total spend by KOBİ segment customers?"*
-- *"Categories of the top 10 most expensive products?"*
-- *"Customers from PostgreSQL who live in Ankara?"*
-- *"Top 5 best-selling products from Parquet?"*
-
----
-
-## Log Stream
-
-When the CLI runs:
-- **Console:** Rich-formatted output (Question, SQL, Result table, Answer panel)
-- **stderr:** structlog INFO lines (to trace the agent flow)
-- **`logs/copilot.log`:** JSON lines (for `grep` / `jq` / log aggregators)
-
-For a quieter console: `python main.py 2>/dev/null` (logs still write to file).
+- Only `SELECT` / `WITH` statements reach the database
+- Banned keywords (`DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `CREATE`, `ATTACH`, `COPY`, `TRUNCATE`, ...) rejected via word-boundary regex
+- Auto `LIMIT` injection prevents OOM from unbounded result sets
+- File access confined to `DATA_DIR` (path traversal protection)
+- PostgreSQL sessions run with `SET default_transaction_read_only = on`
+- API keys never logged or injected into prompts
