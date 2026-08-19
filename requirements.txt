@@ -4,7 +4,7 @@
 
 
 # MCP (Model Context Protocol)
-mcp>=1.2.0
+mcp==1.28.1
 
 # LLM & Agent Orchestration
 langchain>=0.3.0
@@ -33,6 +33,9 @@ python-dotenv>=1.0.1
 rich>=13.9.0                    # tablo/markdown terminal çıktısı
 typer>=0.12.0                   # CLI argümanları
 structlog>=24.4.0
+
+# Web UI
+streamlit>=1.40.0
 
 # Async yardımcıları
 anyio>=4.6.0

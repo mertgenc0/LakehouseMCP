@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from contextlib import AsyncExitStack
 from types import TracebackType
 from typing import Any, cast
@@ -58,7 +59,7 @@ class MCPClient:
     async def __aenter__(self) -> MCPClient:
         stack = AsyncExitStack()
         try:
-            params = StdioServerParameters(command=self.command, args=self.args, env=None)
+            params = StdioServerParameters(command=self.command, args=self.args, env=os.environ.copy())
             # MCP sunucu sürecini (python -m src.mcp_servers.duckdb_server) başlatıp stdin ve stdout kanalları üzerinden veri akış kanalı kurar.
             read, write = await stack.enter_async_context(stdio_client(params))
             session = await stack.enter_async_context(ClientSession(read, write))
